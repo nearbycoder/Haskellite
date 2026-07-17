@@ -28,12 +28,12 @@ jobs:
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: CLANG64
           update: true
           install: >-
-            mingw-w64-ucrt-x86_64-SDL2
-            mingw-w64-ucrt-x86_64-bzip2
-            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-clang-x86_64-SDL2
+            mingw-w64-clang-x86_64-bzip2
+            mingw-w64-clang-x86_64-pkgconf
 
       - name: Export Windows native paths
         if: runner.os == 'Windows'
@@ -41,10 +41,10 @@ jobs:
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-          $ucrtBin = Join-Path $env:MSYS2_LOCATION "ucrt64\bin"
-          $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "ucrt64\lib\pkgconfig"
-          & (Join-Path $ucrtBin "pkg-config.exe") --version
-          $ucrtBin | Out-File -FilePath $env:GITHUB_PATH -Append
+          $clangBin = Join-Path $env:MSYS2_LOCATION "clang64\bin"
+          $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "clang64\lib\pkgconfig"
+          & (Join-Path $clangBin "pkg-config.exe") --version
+          $clangBin | Out-File -FilePath $env:GITHUB_PATH -Append
           "PKG_CONFIG_PATH=$pkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - uses: haskell-actions/setup@v2

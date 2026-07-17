@@ -54,12 +54,12 @@ sudo pacman -S sdl2 bzip2 pkgconf gcc
 # macOS
 brew install sdl2 bzip2 pkg-config
 
-# Windows, from an MSYS2 UCRT64 shell
-pacman -S mingw-w64-ucrt-x86_64-SDL2 mingw-w64-ucrt-x86_64-bzip2 \
-  mingw-w64-ucrt-x86_64-pkgconf
+# Windows, from an MSYS2 CLANG64 shell
+pacman -S mingw-w64-clang-x86_64-SDL2 mingw-w64-clang-x86_64-bzip2 \
+  mingw-w64-clang-x86_64-pkgconf
 ```
 
-On Windows, make sure `C:\msys64\ucrt64\bin` is on `PATH` and its
+On Windows, make sure `C:\msys64\clang64\bin` is on `PATH` and its
 `lib\pkgconfig` directory is on `PKG_CONFIG_PATH` before running Cabal.
 
 ## Using Haskellite
