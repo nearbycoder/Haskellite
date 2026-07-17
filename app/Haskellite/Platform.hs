@@ -15,7 +15,13 @@ module Haskellite.Platform
   ) where
 
 import Data.Text (Text)
-import Haskellite.Types (HotkeyPreset (..))
+import Data.Text qualified as Text
+import Haskellite.Types
+  ( HotkeyKey (..)
+  , HotkeyModifiers (..)
+  , HotkeyPreset
+  , hotkeyBinding
+  )
 import qualified SDL
 #if defined(mingw32_HOST_OS)
 import Haskellite.Platform.Windows qualified as Native
@@ -51,9 +57,39 @@ stopSystemTray :: SystemTray -> IO ()
 stopSystemTray = Tray.stopSystemTray
 
 hotkeyLabel :: HotkeyPreset -> Text
-hotkeyLabel preset = case preset of
-  ControlShiftSpace -> "Ctrl + Shift + Space"
-  ControlAltSpace -> "Ctrl + Alt + Space"
-  SuperShiftSpace -> "Super + Shift + Space"
-  FunctionKey8 -> "F8"
-  FunctionKey9 -> "F9"
+hotkeyLabel preset = Text.intercalate " + " $ modifierLabels <> [hotkeyKeyLabel key]
+  where
+    (modifiers, key) = hotkeyBinding preset
+    modifierLabels =
+      concat
+        [ [controlLabel | modifierControl modifiers]
+        , ["Shift" | modifierShift modifiers]
+        , [altLabel | modifierAlt modifiers]
+        , [superLabel | modifierSuper modifiers]
+        ]
+
+controlLabel, altLabel, superLabel :: Text
+#if defined(darwin_HOST_OS)
+controlLabel = "Control"
+altLabel = "Option"
+superLabel = "Command"
+#else
+controlLabel = "Ctrl"
+altLabel = "Alt"
+superLabel = "Super"
+#endif
+
+hotkeyKeyLabel :: HotkeyKey -> Text
+hotkeyKeyLabel key = case key of
+  HotkeyMinus -> "-"
+  HotkeyEquals -> "="
+  HotkeyLeftBracket -> "["
+  HotkeyRightBracket -> "]"
+  HotkeyBackslash -> "\\"
+  HotkeySemicolon -> ";"
+  HotkeyQuote -> "'"
+  HotkeyBackquote -> "`"
+  HotkeyComma -> ","
+  HotkeyPeriod -> "."
+  HotkeySlash -> "/"
+  _ -> Text.drop 6 . Text.pack $ show key

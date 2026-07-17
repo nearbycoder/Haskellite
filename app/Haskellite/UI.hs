@@ -106,12 +106,15 @@ import Haskellite.Runtime
 import Haskellite.Types
   ( ActivationSource (..)
   , AppPaths (..)
+  , HotkeyKey (..)
+  , HotkeyModifiers (..)
   , HotkeyPreset (..)
   , InstallProgress (..)
   , InstallStage (..)
   , Settings (..)
   , TranscriptRecord (..)
   , TranscriptSegment (..)
+  , validHotkeyBinding
   )
 import Haskellite.Types qualified as Types
 import Paths_haskellite (getDataFileName)
@@ -182,6 +185,9 @@ data UiRefs = UiRefs
   , deviceRef :: IORef Int
   , modelChoiceRef :: IORef Int
   , hotkeyChoiceRef :: IORef Int
+  , customHotkeyRef :: IORef (Maybe HotkeyPreset)
+  , capturingHotkeyRef :: IORef Bool
+  , hotkeyCaptureMessageRef :: IORef (Maybe Text)
   , holdToTalkRef :: IORef Bool
   , pasteRef :: IORef Bool
   , cuesRef :: IORef Bool
@@ -252,6 +258,10 @@ createUiRefs paths = do
           Nothing -> 0
           Just selected -> maybe 0 (+ 1) (findIndex selected availableDevices)
       selectedModel = fromMaybe 0 (findIndex (selectedModelId settings) $ fmap parakeetModelId availableModels)
+      selectedHotkeyIndex = findIndex (activationHotkey settings) allHotkeys
+      customHotkey = case selectedHotkeyIndex of
+        Just _ -> Nothing
+        Nothing -> Just (activationHotkey settings)
       (history, historyError) = either (\message -> ([], Just message)) (\records -> (records, Nothing)) historyResult
       model =
         UiModel
@@ -279,7 +289,10 @@ createUiRefs paths = do
     <*> newIORef (trailingSilenceMs settings)
     <*> newIORef selectedDevice
     <*> newIORef selectedModel
-    <*> newIORef (fromMaybe 0 $ findIndex (activationHotkey settings) allHotkeys)
+    <*> newIORef (fromMaybe (length allHotkeys) selectedHotkeyIndex)
+    <*> newIORef customHotkey
+    <*> newIORef False
+    <*> newIORef Nothing
     <*> newIORef (holdHotkeyToTalk settings)
     <*> newIORef (pasteAfterDictation settings)
     <*> newIORef (playAudioCues settings)
@@ -330,7 +343,8 @@ processEvents refs = do
     else
       pollEventWithImGui >>= \case
         Nothing -> pure False
-        Just event ->
+        Just event -> do
+          captureHotkeyEvent refs (SDL.eventPayload event)
           if SDL.eventPayload event == SDL.QuitEvent
             then hideApplication refs >> processEvents refs
             else processEvents refs
@@ -482,12 +496,19 @@ renderHistory _ model = do
 renderSettings :: UiRefs -> UiModel -> IO ()
 renderSettings refs model = do
   separatorText "Settings"
-  hotkey <- selectedHotkey refs
+  configuredHotkey <- selectedHotkey refs
+  customHotkey <- readIORef (customHotkeyRef refs)
+  capturingHotkey <- readIORef (capturingHotkeyRef refs)
   beginDisabled (isJust (activeSession model) || engineBusy (engineState model))
   changedModel <- combo "Parakeet model" (modelChoiceRef refs) (fmap modelChoiceLabel availableModels)
   endDisabled
   beginDisabled (isJust $ activeSession model)
-  changedHotkey <- combo "Global shortcut" (hotkeyChoiceRef refs) (fmap hotkeyLabel allHotkeys)
+  let shortcutChoices =
+        fmap hotkeyLabel allHotkeys
+          <> ["Custom: " <> hotkeyLabel configuredHotkey | isJust customHotkey]
+  changedHotkey <- combo "Shortcut preset" (hotkeyChoiceRef refs) shortcutChoices
+  sameLine
+  recordClicked <- button $ if capturingHotkey then "Cancel recording" else "Record custom shortcut"
   changedHold <- checkbox "Hold shortcut to talk; release to finish" (holdToTalkRef refs)
   changedDevice <- combo "Microphone" (deviceRef refs) ("System default" : devices refs)
   changedThreshold <- sliderFloat "Voice sensitivity (dB)" (thresholdRef refs) (-60) (-20)
@@ -497,11 +518,26 @@ renderSettings refs model = do
   changedLaunch <- checkbox "Launch in the background" (launchMinimizedRef refs)
   endDisabled
   when changedModel $ switchModel refs
-  when changedHotkey $ registerConfiguredHotkey refs
+  when changedHotkey do
+    writeIORef (customHotkeyRef refs) Nothing
+    writeIORef (capturingHotkeyRef refs) False
+    writeIORef (hotkeyCaptureMessageRef refs) Nothing
+    registerConfiguredHotkey refs
+  when recordClicked $
+    if capturingHotkey
+      then cancelHotkeyCapture refs
+      else beginHotkeyCapture refs
   when (changedModel || changedHotkey || changedHold || changedDevice || changedThreshold || changedSilence || changedPaste || changedCues || changedLaunch) $ saveCurrentSettings refs
-  case hotkeyMessage model of
-    Nothing -> coloredText (ImVec4 0.30 0.92 0.67 1) $ "Shortcut active: " <> hotkeyLabel hotkey
-    Just message -> coloredText (ImVec4 1 0.60 0.32 1) message
+  activeHotkey <- selectedHotkey refs
+  captureMessage <- readIORef (hotkeyCaptureMessageRef refs)
+  captureActive <- readIORef (capturingHotkeyRef refs)
+  if captureActive
+    then do
+      coloredText (ImVec4 0.45 0.86 1 1) "Press the shortcut now. Escape cancels."
+      mapM_ (coloredText $ ImVec4 1 0.60 0.32 1) captureMessage
+    else case hotkeyMessage model of
+      Nothing -> coloredText (ImVec4 0.30 0.92 0.67 1) $ "Shortcut active: " <> hotkeyLabel activeHotkey
+      Just message -> coloredText (ImVec4 1 0.60 0.32 1) message
   case trayMessage model of
     Nothing -> textWrapped "Closing the window keeps Haskellite available from the system tray."
     Just message -> coloredText (ImVec4 1 0.60 0.32 1) message
@@ -610,6 +646,156 @@ registerConfiguredHotkey refs = do
       writeIORef (globalHotkeyRef refs) (Just hotkey)
       modifyIORef' (modelRef refs) $ \state -> state {hotkeyMessage = Nothing}
 
+beginHotkeyCapture :: UiRefs -> IO ()
+beginHotkeyCapture refs = do
+  previous <- readIORef (globalHotkeyRef refs)
+  mapM_ stopGlobalHotkey previous
+  writeIORef (globalHotkeyRef refs) Nothing
+  writeIORef (capturingHotkeyRef refs) True
+  writeIORef (hotkeyCaptureMessageRef refs) Nothing
+
+cancelHotkeyCapture :: UiRefs -> IO ()
+cancelHotkeyCapture refs = do
+  capturing <- readIORef (capturingHotkeyRef refs)
+  when capturing do
+    writeIORef (capturingHotkeyRef refs) False
+    writeIORef (hotkeyCaptureMessageRef refs) Nothing
+    registerConfiguredHotkey refs
+
+captureHotkeyEvent :: UiRefs -> SDL.EventPayload -> IO ()
+captureHotkeyEvent refs payload = do
+  capturing <- readIORef (capturingHotkeyRef refs)
+  when capturing $ case payload of
+    SDL.KeyboardEvent keyboard
+      | SDL.keyboardEventKeyMotion keyboard == SDL.Pressed
+          && not (SDL.keyboardEventRepeat keyboard) ->
+          captureKeyboardShortcut refs (SDL.keyboardEventKeysym keyboard)
+    _ -> pure ()
+
+captureKeyboardShortcut :: UiRefs -> SDL.Keysym -> IO ()
+captureKeyboardShortcut refs keysym = do
+  let keycode = SDL.keysymKeycode keysym
+      modifiers = capturedModifiers (SDL.keysymModifier keysym)
+      noModifiers = modifiers == HotkeyModifiers False False False False
+  if keycode == SDL.KeycodeEscape && noModifiers
+    then cancelHotkeyCapture refs
+    else case lookup keycode capturedHotkeyKeys of
+      Nothing
+        | keycode `elem` modifierKeycodes -> pure ()
+        | otherwise ->
+            writeIORef (hotkeyCaptureMessageRef refs) $
+              Just "That key is not supported. Try a letter, number, navigation key, punctuation key, or F1–F12."
+      Just key
+        | not (validHotkeyBinding modifiers key) ->
+            writeIORef (hotkeyCaptureMessageRef refs) $
+              Just "Add Control, Shift, Option/Alt, or Command/Super to regular keys. F1–F12 may be used alone."
+        | otherwise -> do
+            writeIORef (customHotkeyRef refs) . Just $ CustomHotkey modifiers key
+            writeIORef (hotkeyChoiceRef refs) (length allHotkeys)
+            writeIORef (capturingHotkeyRef refs) False
+            writeIORef (hotkeyCaptureMessageRef refs) Nothing
+            registerConfiguredHotkey refs
+            saveCurrentSettings refs
+
+capturedModifiers :: SDL.KeyModifier -> HotkeyModifiers
+capturedModifiers modifiers =
+  HotkeyModifiers
+    { modifierControl = SDL.keyModifierLeftCtrl modifiers || SDL.keyModifierRightCtrl modifiers
+    , modifierShift = SDL.keyModifierLeftShift modifiers || SDL.keyModifierRightShift modifiers
+    , modifierAlt = SDL.keyModifierLeftAlt modifiers || SDL.keyModifierRightAlt modifiers || SDL.keyModifierAltGr modifiers
+    , modifierSuper = SDL.keyModifierLeftGUI modifiers || SDL.keyModifierRightGUI modifiers
+    }
+
+modifierKeycodes :: [SDL.Keycode]
+modifierKeycodes =
+  [ SDL.KeycodeLCtrl
+  , SDL.KeycodeRCtrl
+  , SDL.KeycodeLShift
+  , SDL.KeycodeRShift
+  , SDL.KeycodeLAlt
+  , SDL.KeycodeRAlt
+  , SDL.KeycodeLGUI
+  , SDL.KeycodeRGUI
+  ]
+
+capturedHotkeyKeys :: [(SDL.Keycode, HotkeyKey)]
+capturedHotkeyKeys =
+  [ (SDL.KeycodeA, HotkeyA)
+  , (SDL.KeycodeB, HotkeyB)
+  , (SDL.KeycodeC, HotkeyC)
+  , (SDL.KeycodeD, HotkeyD)
+  , (SDL.KeycodeE, HotkeyE)
+  , (SDL.KeycodeF, HotkeyF)
+  , (SDL.KeycodeG, HotkeyG)
+  , (SDL.KeycodeH, HotkeyH)
+  , (SDL.KeycodeI, HotkeyI)
+  , (SDL.KeycodeJ, HotkeyJ)
+  , (SDL.KeycodeK, HotkeyK)
+  , (SDL.KeycodeL, HotkeyL)
+  , (SDL.KeycodeM, HotkeyM)
+  , (SDL.KeycodeN, HotkeyN)
+  , (SDL.KeycodeO, HotkeyO)
+  , (SDL.KeycodeP, HotkeyP)
+  , (SDL.KeycodeQ, HotkeyQ)
+  , (SDL.KeycodeR, HotkeyR)
+  , (SDL.KeycodeS, HotkeyS)
+  , (SDL.KeycodeT, HotkeyT)
+  , (SDL.KeycodeU, HotkeyU)
+  , (SDL.KeycodeV, HotkeyV)
+  , (SDL.KeycodeW, HotkeyW)
+  , (SDL.KeycodeX, HotkeyX)
+  , (SDL.KeycodeY, HotkeyY)
+  , (SDL.KeycodeZ, HotkeyZ)
+  , (SDL.Keycode0, Hotkey0)
+  , (SDL.Keycode1, Hotkey1)
+  , (SDL.Keycode2, Hotkey2)
+  , (SDL.Keycode3, Hotkey3)
+  , (SDL.Keycode4, Hotkey4)
+  , (SDL.Keycode5, Hotkey5)
+  , (SDL.Keycode6, Hotkey6)
+  , (SDL.Keycode7, Hotkey7)
+  , (SDL.Keycode8, Hotkey8)
+  , (SDL.Keycode9, Hotkey9)
+  , (SDL.KeycodeSpace, HotkeySpace)
+  , (SDL.KeycodeTab, HotkeyTab)
+  , (SDL.KeycodeReturn, HotkeyReturn)
+  , (SDL.KeycodeEscape, HotkeyEscape)
+  , (SDL.KeycodeBackspace, HotkeyBackspace)
+  , (SDL.KeycodeLeft, HotkeyLeft)
+  , (SDL.KeycodeRight, HotkeyRight)
+  , (SDL.KeycodeUp, HotkeyUp)
+  , (SDL.KeycodeDown, HotkeyDown)
+  , (SDL.KeycodeHome, HotkeyHome)
+  , (SDL.KeycodeEnd, HotkeyEnd)
+  , (SDL.KeycodePageUp, HotkeyPageUp)
+  , (SDL.KeycodePageDown, HotkeyPageDown)
+  , (SDL.KeycodeInsert, HotkeyInsert)
+  , (SDL.KeycodeDelete, HotkeyDelete)
+  , (SDL.KeycodeMinus, HotkeyMinus)
+  , (SDL.KeycodeEquals, HotkeyEquals)
+  , (SDL.KeycodeLeftBracket, HotkeyLeftBracket)
+  , (SDL.KeycodeRightBracket, HotkeyRightBracket)
+  , (SDL.KeycodeBackslash, HotkeyBackslash)
+  , (SDL.KeycodeSemicolon, HotkeySemicolon)
+  , (SDL.KeycodeQuote, HotkeyQuote)
+  , (SDL.KeycodeBackquote, HotkeyBackquote)
+  , (SDL.KeycodeComma, HotkeyComma)
+  , (SDL.KeycodePeriod, HotkeyPeriod)
+  , (SDL.KeycodeSlash, HotkeySlash)
+  , (SDL.KeycodeF1, HotkeyF1)
+  , (SDL.KeycodeF2, HotkeyF2)
+  , (SDL.KeycodeF3, HotkeyF3)
+  , (SDL.KeycodeF4, HotkeyF4)
+  , (SDL.KeycodeF5, HotkeyF5)
+  , (SDL.KeycodeF6, HotkeyF6)
+  , (SDL.KeycodeF7, HotkeyF7)
+  , (SDL.KeycodeF8, HotkeyF8)
+  , (SDL.KeycodeF9, HotkeyF9)
+  , (SDL.KeycodeF10, HotkeyF10)
+  , (SDL.KeycodeF11, HotkeyF11)
+  , (SDL.KeycodeF12, HotkeyF12)
+  ]
+
 registerSystemTray :: UiRefs -> SDL.Window -> IO ()
 registerSystemTray refs window = do
   started <- startSystemTray window (emit refs TrayShowRequested) (emit refs TrayQuitRequested)
@@ -645,7 +831,9 @@ showMainApplication refs = do
     SDL.raiseWindow window
 
 hideApplication :: UiRefs -> IO ()
-hideApplication refs = withWindow refs SDL.hideWindow
+hideApplication refs = do
+  cancelHotkeyCapture refs
+  withWindow refs SDL.hideWindow
 
 withWindow :: UiRefs -> (SDL.Window -> IO ()) -> IO ()
 withWindow refs action = readIORef (windowRef refs) >>= mapM_ action
@@ -927,8 +1115,12 @@ allHotkeys = [ControlShiftSpace, ControlAltSpace, SuperShiftSpace, FunctionKey8,
 
 selectedHotkey :: UiRefs -> IO HotkeyPreset
 selectedHotkey refs = do
-  choice <- readIORef (hotkeyChoiceRef refs)
-  pure $ fromMaybe ControlShiftSpace (listToMaybe $ drop choice allHotkeys)
+  custom <- readIORef (customHotkeyRef refs)
+  case custom of
+    Just hotkey -> pure hotkey
+    Nothing -> do
+      choice <- readIORef (hotkeyChoiceRef refs)
+      pure $ fromMaybe ControlShiftSpace (listToMaybe $ drop choice allHotkeys)
 
 engineBusy :: EngineState -> Bool
 engineBusy = \case

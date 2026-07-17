@@ -10,8 +10,8 @@ Python process, or network connection is needed after the one-time model setup.
 ## What is implemented
 
 - Native desktop UI on Linux and macOS through SDL2 and Dear ImGui.
-- Background system-tray service and configurable toggle or hold-to-talk
-  dictation shortcut.
+- Background system-tray service and a recordable custom shortcut that supports
+  either toggle or hold-to-talk dictation.
 - Non-activating compact listening overlay, automatic stop on trailing silence,
   and generated start/finish audio cues.
 - Clipboard-backed focused-field delivery on macOS and X11. Secure
@@ -34,6 +34,25 @@ The handwritten application and binding code is Haskell (`.hs`/`.hsc`). There
 is no C shim and no Python sidecar. Like any Haskell desktop app, Haskellite uses
 native system libraries: SDL2 for windows/audio and sherpa-onnx/ONNX Runtime to
 execute the NVIDIA model. Those libraries are loaded through Haskell FFI.
+
+## Recent improvements
+
+- **Fully custom shortcuts:** record combinations such as
+  **Command+Shift+A**, **Command+Control+Shift+A**, or a modified punctuation,
+  navigation, number, or function key. Custom bindings are validated, saved,
+  restored at launch, and translated to the native macOS and Linux listeners.
+- **Push-to-talk:** optionally hold the shortcut to record and release it to
+  finish. Toggle mode remains available.
+- **Background-first behavior:** shortcut dictation displays a compact overlay
+  without activating Haskellite, so the insertion cursor stays in the app where
+  dictation began.
+- **Reliable macOS delivery:** Haskellite remembers the previously active app,
+  requests Accessibility access when needed, and posts a complete Command+V
+  chord after transcription.
+- **Faster completion:** the finish sound no longer blocks delivery, and the
+  clipboard-to-paste handoff starts almost immediately after recognition.
+- **Focused support matrix:** Linux and macOS are built in CI. Windows source is
+  retained for later work but Windows builds and checks are currently disabled.
 
 ## Quick start
 
@@ -61,12 +80,63 @@ sudo apt install libsdl2-dev libbz2-dev libx11-dev libxtst-dev pkg-config g++
 sudo pacman -S sdl2 bzip2 libx11 libxtst pkgconf gcc
 
 # macOS
-brew install sdl2 bzip2 pkg-config
+brew install sdl2 sdl3 bzip2 pkg-config
 ```
 
 Windows support is paused. The existing Windows backend remains in the source
 tree for future work, but it is not currently supported, packaged, or tested in
 CI.
+
+## Building on macOS
+
+Haskellite supports macOS 12 or newer on both Apple Silicon and Intel Macs. The
+bundle produced locally targets the architecture of the Mac that builds it.
+
+Install Apple's command-line developer tools,
+[GHCup](https://www.haskell.org/ghcup/), GHC 9.10.3, Cabal 3.16.1.0, and the
+native libraries:
+
+```bash
+xcode-select --install
+brew install sdl2 sdl3 bzip2 pkg-config
+ghcup install ghc 9.10.3
+ghcup set ghc 9.10.3
+ghcup install cabal 3.16.1.0
+ghcup set cabal 3.16.1.0
+```
+
+For a developer build that runs directly from Cabal:
+
+```bash
+git clone https://github.com/nearbycoder/Haskellite.git
+cd Haskellite
+cabal update
+cabal build all --enable-tests
+cabal test --test-show-details=direct
+cabal run haskellite
+```
+
+To create a movable, ad-hoc-signed macOS application bundle and install it:
+
+```bash
+./packaging/build-macos.sh
+cp -R release/Haskellite.app /Applications/
+open /Applications/Haskellite.app
+```
+
+The packaging script performs an optimized build, copies application resources,
+recursively bundles non-system dynamic libraries, rewrites their load paths,
+and verifies the final code signature. It creates
+`release/Haskellite.app` by default; pass another `.app` path as the first
+argument to change the output. Developer ID signing and notarization commands
+are documented in [packaging/README.md](packaging/README.md).
+
+On first launch, macOS will ask for **Microphone** access. Haskellite also needs
+**Input Monitoring** for the global shortcut and **Accessibility** for automatic
+paste. Enable Haskellite under **System Settings → Privacy & Security** for each
+requested category, then quit and reopen it so the global listener picks up the
+new permissions. The model and native Parakeet runtime are checksum-verified
+first-run downloads and are not embedded in the application bundle.
 
 ## Using Haskellite
 
@@ -76,6 +146,12 @@ CI.
 4. Pause for the configured interval. Haskellite transcribes, closes the
    compact overlay, and pastes into the field that was focused.
 5. Open **History** whenever you need to recover or copy an earlier dictation.
+
+To choose your own binding, open **Settings**, click **Record custom shortcut**,
+and press the combination you want, such as **Command+Shift+A** or
+**Command+Control+Shift+A** on macOS. Letters, numbers, navigation keys,
+punctuation, and F1–F12 are supported. Regular keys require a modifier so the
+shortcut cannot accidentally replace ordinary typing; F1–F12 can be used alone.
 
 Enable **Hold shortcut to talk; release to finish** in Settings for push-to-talk
 operation. In that mode, key-down starts listening and key-up stops the session;

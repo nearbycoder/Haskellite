@@ -16,6 +16,7 @@ import Control.Concurrent.Async (Async, async, cancel, waitCatch)
 import Control.Exception (SomeException, bracket, displayException, finally, onException, try)
 import Control.Monad (void, when)
 import Data.Bits ((.|.))
+import Data.Char (chr, ord)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
@@ -62,9 +63,6 @@ import Graphics.X11.Types
   , mod4Mask
   , shiftMask
   , xK_Control_L
-  , xK_F8
-  , xK_F9
-  , xK_space
   , xK_v
   )
 import Graphics.X11.Xlib
@@ -84,7 +82,12 @@ import Graphics.X11.Xlib
   , ungrabKey
   )
 import Graphics.X11.Xlib.Types (Display (..))
-import Haskellite.Types (HotkeyPreset (..))
+import Haskellite.Types
+  ( HotkeyKey (..)
+  , HotkeyModifiers (..)
+  , HotkeyPreset
+  , hotkeyBinding
+  )
 import System.Environment (lookupEnv)
 import System.Timeout (timeout)
 
@@ -280,12 +283,16 @@ handlePortalShortcut action signal =
     _ -> pure ()
 
 portalTrigger :: HotkeyPreset -> Text
-portalTrigger preset = case preset of
-  ControlShiftSpace -> "CTRL+SHIFT+space"
-  ControlAltSpace -> "CTRL+ALT+space"
-  SuperShiftSpace -> "LOGO+SHIFT+space"
-  FunctionKey8 -> "F8"
-  FunctionKey9 -> "F9"
+portalTrigger preset = Text.intercalate "+" $ modifierTokens <> [portalKeyToken key]
+  where
+    (modifiers, key) = hotkeyBinding preset
+    modifierTokens =
+      concat
+        [ ["CTRL" | modifierControl modifiers]
+        , ["SHIFT" | modifierShift modifiers]
+        , ["ALT" | modifierAlt modifiers]
+        , ["LOGO" | modifierSuper modifiers]
+        ]
 
 portalService :: DBus.BusName
 portalService = "org.freedesktop.portal.Desktop"
@@ -307,20 +314,89 @@ ignoredLockMasks :: [KeyMask]
 ignoredLockMasks = [0, lockMask, mod2Mask, lockMask .|. mod2Mask]
 
 hotkeyModifiers :: HotkeyPreset -> KeyMask
-hotkeyModifiers preset = case preset of
-  ControlShiftSpace -> controlMask .|. shiftMask
-  ControlAltSpace -> controlMask .|. mod1Mask
-  SuperShiftSpace -> mod4Mask .|. shiftMask
-  FunctionKey8 -> 0
-  FunctionKey9 -> 0
+hotkeyModifiers preset =
+  foldr (.|.) 0 $
+    concat
+      [ [controlMask | modifierControl modifiers]
+      , [shiftMask | modifierShift modifiers]
+      , [mod1Mask | modifierAlt modifiers]
+      , [mod4Mask | modifierSuper modifiers]
+      ]
+  where
+    (modifiers, _) = hotkeyBinding preset
 
 hotkeyKeySym :: HotkeyPreset -> KeySym
-hotkeyKeySym preset = case preset of
-  ControlShiftSpace -> xK_space
-  ControlAltSpace -> xK_space
-  SuperShiftSpace -> xK_space
-  FunctionKey8 -> xK_F8
-  FunctionKey9 -> xK_F9
+hotkeyKeySym preset = keySym key
+  where
+    (_, key) = hotkeyBinding preset
+
+keySym :: HotkeyKey -> KeySym
+keySym key
+  | key >= HotkeyA && key <= HotkeyZ = fromIntegral $ ord 'a' + fromEnum key - fromEnum HotkeyA
+  | key >= Hotkey0 && key <= Hotkey9 = fromIntegral $ ord '0' + fromEnum key - fromEnum Hotkey0
+  | key >= HotkeyF1 && key <= HotkeyF12 = fromIntegral $ 0xFFBE + fromEnum key - fromEnum HotkeyF1
+  | otherwise = case key of
+      HotkeySpace -> 0x0020
+      HotkeyTab -> 0xFF09
+      HotkeyReturn -> 0xFF0D
+      HotkeyEscape -> 0xFF1B
+      HotkeyBackspace -> 0xFF08
+      HotkeyLeft -> 0xFF51
+      HotkeyUp -> 0xFF52
+      HotkeyRight -> 0xFF53
+      HotkeyDown -> 0xFF54
+      HotkeyHome -> 0xFF50
+      HotkeyEnd -> 0xFF57
+      HotkeyPageUp -> 0xFF55
+      HotkeyPageDown -> 0xFF56
+      HotkeyInsert -> 0xFF63
+      HotkeyDelete -> 0xFFFF
+      HotkeyMinus -> 0x002D
+      HotkeyEquals -> 0x003D
+      HotkeyLeftBracket -> 0x005B
+      HotkeyRightBracket -> 0x005D
+      HotkeyBackslash -> 0x005C
+      HotkeySemicolon -> 0x003B
+      HotkeyQuote -> 0x0027
+      HotkeyBackquote -> 0x0060
+      HotkeyComma -> 0x002C
+      HotkeyPeriod -> 0x002E
+      HotkeySlash -> 0x002F
+      _ -> 0
+
+portalKeyToken :: HotkeyKey -> Text
+portalKeyToken key
+  | key >= HotkeyA && key <= HotkeyZ = Text.singleton . chr $ ord 'a' + fromEnum key - fromEnum HotkeyA
+  | key >= Hotkey0 && key <= Hotkey9 = Text.singleton . chr $ ord '0' + fromEnum key - fromEnum Hotkey0
+  | key >= HotkeyF1 && key <= HotkeyF12 = "F" <> Text.pack (show $ fromEnum key - fromEnum HotkeyF1 + 1)
+  | otherwise = case key of
+      HotkeySpace -> "space"
+      HotkeyTab -> "Tab"
+      HotkeyReturn -> "Return"
+      HotkeyEscape -> "Escape"
+      HotkeyBackspace -> "BackSpace"
+      HotkeyLeft -> "Left"
+      HotkeyRight -> "Right"
+      HotkeyUp -> "Up"
+      HotkeyDown -> "Down"
+      HotkeyHome -> "Home"
+      HotkeyEnd -> "End"
+      HotkeyPageUp -> "Page_Up"
+      HotkeyPageDown -> "Page_Down"
+      HotkeyInsert -> "Insert"
+      HotkeyDelete -> "Delete"
+      HotkeyMinus -> "minus"
+      HotkeyEquals -> "equal"
+      HotkeyLeftBracket -> "bracketleft"
+      HotkeyRightBracket -> "bracketright"
+      HotkeyBackslash -> "backslash"
+      HotkeySemicolon -> "semicolon"
+      HotkeyQuote -> "apostrophe"
+      HotkeyBackquote -> "grave"
+      HotkeyComma -> "comma"
+      HotkeyPeriod -> "period"
+      HotkeySlash -> "slash"
+      _ -> "space"
 
 enableDetectableAutoRepeat :: Display -> IO Bool
 enableDetectableAutoRepeat display =

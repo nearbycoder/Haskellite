@@ -77,6 +77,10 @@ The executable implements its supported OS services directly from Haskell:
 - Linux uses the XDG Global Shortcuts portal on Wayland, X11 passive key grabs
   elsewhere, and a StatusNotifierItem over D-Bus.
 
+The settings UI captures custom SDL key combinations, stores their normalized
+modifier/key representation, and translates the same binding into each native
+global-shortcut backend. Built-in presets use that representation as well.
+
 A Windows implementation that polls global key state, uses the notification
 area API, and emits the native paste chord remains in the tree as deferred code.
 It is not currently packaged, supported, or exercised in CI.

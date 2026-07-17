@@ -19,7 +19,12 @@ import Data.Text qualified as Text
 import Data.Word (Word8, Word32)
 import Foreign.C.Types (CShort (..))
 import Foreign.Ptr (WordPtr (..))
-import Haskellite.Types (HotkeyPreset (..))
+import Haskellite.Types
+  ( HotkeyKey (..)
+  , HotkeyModifiers (..)
+  , HotkeyPreset
+  , hotkeyBinding
+  )
 
 newtype GlobalHotkey = GlobalHotkey (Async ())
 
@@ -56,12 +61,50 @@ hotkeyPressed :: HotkeyPreset -> IO Bool
 hotkeyPressed preset = allM isDown (hotkeyKeys preset)
 
 hotkeyKeys :: HotkeyPreset -> [Word8]
-hotkeyKeys preset = case preset of
-  ControlShiftSpace -> [virtualControl, virtualShift, virtualSpace]
-  ControlAltSpace -> [virtualControl, virtualAlt, virtualSpace]
-  SuperShiftSpace -> [virtualWindows, virtualShift, virtualSpace]
-  FunctionKey8 -> [virtualF8]
-  FunctionKey9 -> [virtualF9]
+hotkeyKeys preset = modifierKeys <> [windowsKey key]
+  where
+    (modifiers, key) = hotkeyBinding preset
+    modifierKeys =
+      concat
+        [ [virtualControl | modifierControl modifiers]
+        , [virtualShift | modifierShift modifiers]
+        , [virtualAlt | modifierAlt modifiers]
+        , [virtualWindows | modifierSuper modifiers]
+        ]
+
+windowsKey :: HotkeyKey -> Word8
+windowsKey key
+  | key >= HotkeyA && key <= HotkeyZ = fromIntegral $ 0x41 + fromEnum key - fromEnum HotkeyA
+  | key >= Hotkey0 && key <= Hotkey9 = fromIntegral $ 0x30 + fromEnum key - fromEnum Hotkey0
+  | key >= HotkeyF1 && key <= HotkeyF12 = fromIntegral $ 0x70 + fromEnum key - fromEnum HotkeyF1
+  | otherwise = case key of
+      HotkeySpace -> 0x20
+      HotkeyTab -> 0x09
+      HotkeyReturn -> 0x0D
+      HotkeyEscape -> 0x1B
+      HotkeyBackspace -> 0x08
+      HotkeyLeft -> 0x25
+      HotkeyRight -> 0x27
+      HotkeyUp -> 0x26
+      HotkeyDown -> 0x28
+      HotkeyHome -> 0x24
+      HotkeyEnd -> 0x23
+      HotkeyPageUp -> 0x21
+      HotkeyPageDown -> 0x22
+      HotkeyInsert -> 0x2D
+      HotkeyDelete -> 0x2E
+      HotkeyMinus -> 0xBD
+      HotkeyEquals -> 0xBB
+      HotkeyLeftBracket -> 0xDB
+      HotkeyRightBracket -> 0xDD
+      HotkeyBackslash -> 0xDC
+      HotkeySemicolon -> 0xBA
+      HotkeyQuote -> 0xDE
+      HotkeyBackquote -> 0xC0
+      HotkeyComma -> 0xBC
+      HotkeyPeriod -> 0xBE
+      HotkeySlash -> 0xBF
+      _ -> 0
 
 isDown :: Word8 -> IO Bool
 isDown virtualKey = do
@@ -79,15 +122,12 @@ allM predicate = go
       matches <- predicate value
       if matches then go rest else pure False
 
-virtualControl, virtualShift, virtualAlt, virtualWindows, virtualSpace, virtualV, virtualF8, virtualF9 :: Word8
+virtualControl, virtualShift, virtualAlt, virtualWindows, virtualV :: Word8
 virtualControl = 0x11
 virtualShift = 0x10
 virtualAlt = 0x12
 virtualWindows = 0x5B
-virtualSpace = 0x20
 virtualV = 0x56
-virtualF8 = 0x77
-virtualF9 = 0x78
 
 keyUp :: Word32
 keyUp = 0x0002

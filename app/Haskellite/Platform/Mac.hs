@@ -23,7 +23,12 @@ import Data.Word (Word16, Word32, Word64)
 import Foreign (FunPtr, Ptr, freeHaskellFunPtr, nullPtr, peek)
 import Foreign.C.String (CString, withCString)
 import Foreign.C.Types (CBool (..), CInt (..), CLong (..), CULong (..))
-import Haskellite.Types (HotkeyPreset (..))
+import Haskellite.Types
+  ( HotkeyKey (..)
+  , HotkeyModifiers (..)
+  , HotkeyPreset
+  , hotkeyBinding
+  )
 
 data GlobalHotkey = GlobalHotkey
   { workerThread :: Async ()
@@ -186,20 +191,93 @@ matchesHotkey preset keyCode flags =
   keyCode == expectedKey && flags .&. modifierMask == expectedModifiers
   where
     expectedKey = hotkeyKeyCode preset
-    expectedModifiers = case preset of
-      ControlShiftSpace -> controlMask .|. shiftMask
-      ControlAltSpace -> controlMask .|. optionMask
-      SuperShiftSpace -> commandMask .|. shiftMask
-      FunctionKey8 -> 0
-      FunctionKey9 -> 0
+    (modifiers, _) = hotkeyBinding preset
+    expectedModifiers = macModifierMask modifiers
 
 hotkeyKeyCode :: HotkeyPreset -> Word16
-hotkeyKeyCode preset = case preset of
-  ControlShiftSpace -> virtualSpace
-  ControlAltSpace -> virtualSpace
-  SuperShiftSpace -> virtualSpace
-  FunctionKey8 -> virtualF8
-  FunctionKey9 -> virtualF9
+hotkeyKeyCode = macKeyCode . snd . hotkeyBinding
+
+macModifierMask :: HotkeyModifiers -> Word64
+macModifierMask modifiers =
+  foldr
+    (.|.)
+    0
+    $ concat
+      [ [controlMask | modifierControl modifiers]
+      , [shiftMask | modifierShift modifiers]
+      , [optionMask | modifierAlt modifiers]
+      , [commandMask | modifierSuper modifiers]
+      ]
+
+macKeyCode :: HotkeyKey -> Word16
+macKeyCode key
+  | key >= HotkeyA && key <= HotkeyZ = macLetterKeyCodes !! (fromEnum key - fromEnum HotkeyA)
+  | key >= Hotkey0 && key <= Hotkey9 = macDigitKeyCodes !! (fromEnum key - fromEnum Hotkey0)
+  | key >= HotkeyF1 && key <= HotkeyF12 = macFunctionKeyCodes !! (fromEnum key - fromEnum HotkeyF1)
+  | otherwise = case key of
+      HotkeySpace -> 49
+      HotkeyTab -> 48
+      HotkeyReturn -> 36
+      HotkeyEscape -> 53
+      HotkeyBackspace -> 51
+      HotkeyLeft -> 123
+      HotkeyRight -> 124
+      HotkeyUp -> 126
+      HotkeyDown -> 125
+      HotkeyHome -> 115
+      HotkeyEnd -> 119
+      HotkeyPageUp -> 116
+      HotkeyPageDown -> 121
+      HotkeyInsert -> 114
+      HotkeyDelete -> 117
+      HotkeyMinus -> 27
+      HotkeyEquals -> 24
+      HotkeyLeftBracket -> 33
+      HotkeyRightBracket -> 30
+      HotkeyBackslash -> 42
+      HotkeySemicolon -> 41
+      HotkeyQuote -> 39
+      HotkeyBackquote -> 50
+      HotkeyComma -> 43
+      HotkeyPeriod -> 47
+      HotkeySlash -> 44
+      _ -> 0
+
+macLetterKeyCodes :: [Word16]
+macLetterKeyCodes =
+  [ 0
+  , 11
+  , 8
+  , 2
+  , 14
+  , 3
+  , 5
+  , 4
+  , 34
+  , 38
+  , 40
+  , 37
+  , 46
+  , 45
+  , 31
+  , 35
+  , 12
+  , 15
+  , 1
+  , 17
+  , 32
+  , 9
+  , 13
+  , 7
+  , 16
+  , 6
+  ]
+
+macDigitKeyCodes :: [Word16]
+macDigitKeyCodes = [29, 18, 19, 20, 21, 23, 22, 26, 28, 25]
+
+macFunctionKeyCodes :: [Word16]
+macFunctionKeyCodes = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
 
 exceptionText :: SomeException -> Text
 exceptionText = Text.pack . displayException
@@ -223,11 +301,8 @@ optionMask = 0x00080000
 commandMask = 0x00100000
 modifierMask = shiftMask .|. controlMask .|. optionMask .|. commandMask
 
-virtualV, virtualSpace, virtualF8, virtualF9 :: Word16
+virtualV :: Word16
 virtualV = 9
-virtualSpace = 49
-virtualF8 = 100
-virtualF9 = 101
 
 virtualCommand :: Word16
 virtualCommand = 55
