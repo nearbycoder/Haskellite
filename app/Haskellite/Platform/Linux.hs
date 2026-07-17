@@ -4,6 +4,8 @@
 
 module Haskellite.Platform.Linux
   ( GlobalHotkey
+  , PasteTarget
+  , capturePasteTarget
   , sendPasteShortcut
   , startGlobalHotkey
   , stopGlobalHotkey
@@ -85,6 +87,11 @@ data GlobalHotkey
   = X11Hotkey (Async ())
   | PortalHotkey Client ObjectPath SignalHandler
 
+data PasteTarget = PasteTarget
+
+capturePasteTarget :: IO (Maybe PasteTarget)
+capturePasteTarget = pure (Just PasteTarget)
+
 startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
 startGlobalHotkey preset action = do
   wayland <- isJust <$> lookupEnv "WAYLAND_DISPLAY"
@@ -115,8 +122,8 @@ stopGlobalHotkey hotkey = case hotkey of
           }
     disconnect client
 
-sendPasteShortcut :: IO (Either Text ())
-sendPasteShortcut = do
+sendPasteShortcut :: Maybe PasteTarget -> IO (Either Text ())
+sendPasteShortcut _ = do
   wayland <- isJust <$> lookupEnv "WAYLAND_DISPLAY"
   if wayland
     then pure $ Left "Wayland prevented synthetic paste; the dictation is on the clipboard"

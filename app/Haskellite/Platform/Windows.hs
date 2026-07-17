@@ -2,6 +2,8 @@
 
 module Haskellite.Platform.Windows
   ( GlobalHotkey
+  , PasteTarget
+  , capturePasteTarget
   , sendPasteShortcut
   , startGlobalHotkey
   , stopGlobalHotkey
@@ -21,6 +23,11 @@ import Haskellite.Types (HotkeyPreset (..))
 
 newtype GlobalHotkey = GlobalHotkey (Async ())
 
+data PasteTarget = PasteTarget
+
+capturePasteTarget :: IO (Maybe PasteTarget)
+capturePasteTarget = pure (Just PasteTarget)
+
 startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
 startGlobalHotkey preset action = do
   worker <- async $ poll False
@@ -35,8 +42,8 @@ startGlobalHotkey preset action = do
 stopGlobalHotkey :: GlobalHotkey -> IO ()
 stopGlobalHotkey (GlobalHotkey worker) = cancel worker >> void (waitCatch worker)
 
-sendPasteShortcut :: IO (Either Text ())
-sendPasteShortcut = do
+sendPasteShortcut :: Maybe PasteTarget -> IO (Either Text ())
+sendPasteShortcut _ = do
   outcome <- try $ do
     keyEvent virtualControl 0
     keyEvent virtualV 0

@@ -4,21 +4,24 @@
 
 module Haskellite.Platform.Mac
   ( GlobalHotkey
+  , PasteTarget
+  , capturePasteTarget
   , sendPasteShortcut
   , startGlobalHotkey
   , stopGlobalHotkey
   ) where
 
-import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar, threadDelay)
 import Control.Concurrent.Async (Async, asyncBound, cancel, waitCatch)
 import Control.Exception (SomeException, bracket, displayException, finally, try)
-import Control.Monad (void, when)
+import Control.Monad (unless, void, when)
 import Data.Bits ((.&.), (.|.), shiftL)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word16, Word32, Word64)
 import Foreign (FunPtr, Ptr, freeHaskellFunPtr, nullPtr, peek)
-import Foreign.C.Types (CBool (..), CLong (..))
+import Foreign.C.String (CString, withCString)
+import Foreign.C.Types (CBool (..), CInt (..), CLong (..), CULong (..))
 import Haskellite.Types (HotkeyPreset (..))
 
 data GlobalHotkey = GlobalHotkey
@@ -26,6 +29,8 @@ data GlobalHotkey = GlobalHotkey
   , workerRunLoop :: Ptr ()
   , eventCallback :: FunPtr EventTapCallback
   }
+
+newtype PasteTarget = PasteTarget CInt
 
 type EventTapCallback = Ptr () -> Word32 -> Ptr () -> Ptr () -> IO (Ptr ())
 
@@ -54,9 +59,30 @@ stopGlobalHotkey hotkey = do
   void $ waitCatch (workerThread hotkey)
   freeHaskellFunPtr (eventCallback hotkey)
 
-sendPasteShortcut :: IO (Either Text ())
-sendPasteShortcut = do
-  outcome <- try $
+capturePasteTarget :: IO (Maybe PasteTarget)
+capturePasteTarget = do
+  outcome <- try $ do
+    workspaceClass <- objcClass "NSWorkspace"
+    workspace <- msgSendPointer workspaceClass =<< selector "sharedWorkspace"
+    frontmost <- msgSendPointer workspace =<< selector "frontmostApplication"
+    runningClass <- objcClass "NSRunningApplication"
+    current <- msgSendPointer runningClass =<< selector "currentApplication"
+    if frontmost == nullPtr || current == nullPtr
+      then pure Nothing
+      else do
+        frontmostPid <- msgSendCIntResult frontmost =<< selector "processIdentifier"
+        currentPid <- msgSendCIntResult current =<< selector "processIdentifier"
+        pure $
+          if frontmostPid > 0 && frontmostPid /= currentPid
+            then Just (PasteTarget frontmostPid)
+            else Nothing
+  pure $ either (const Nothing) id (outcome :: Either SomeException (Maybe PasteTarget))
+
+sendPasteShortcut :: Maybe PasteTarget -> IO (Either Text ())
+sendPasteShortcut Nothing = pure $ Left "macOS could not remember the application that owned the focused field"
+sendPasteShortcut (Just target) = do
+  outcome <- try $ do
+    restorePasteTarget target
     bracket (cgEventCreateKeyboardEvent nullPtr virtualV 1) cfRelease $ \down ->
       bracket (cgEventCreateKeyboardEvent nullPtr virtualV 0) cfRelease $ \up -> do
         when (down == nullPtr || up == nullPtr) $ ioError (userError "macOS could not create a keyboard event")
@@ -65,6 +91,36 @@ sendPasteShortcut = do
         cgEventPost hidEventTap down
         cgEventPost hidEventTap up
   pure $ either (Left . exceptionText) Right outcome
+
+restorePasteTarget :: PasteTarget -> IO ()
+restorePasteTarget (PasteTarget processId) = do
+  runningClass <- objcClass "NSRunningApplication"
+  applicationSelector <- selector "runningApplicationWithProcessIdentifier:"
+  target <- msgSendCIntArgument runningClass applicationSelector processId
+  when (target == nullPtr) $ ioError (userError "The application that owned the focused field is no longer running")
+  activateSelector <- selector "activateWithOptions:"
+  activated <- msgSendCULongArgument target activateSelector activateIgnoringOtherApps
+  unless (activated /= 0) $ ioError (userError "macOS did not restore the application that owned the focused field")
+  waitUntilActive target 12
+  threadDelay 50000
+
+waitUntilActive :: Ptr () -> Int -> IO ()
+waitUntilActive _ 0 = ioError (userError "Timed out while restoring the application that owned the focused field")
+waitUntilActive application attempts = do
+  active <- msgSendBool application =<< selector "isActive"
+  unless (active /= 0) $ threadDelay 50000 >> waitUntilActive application (attempts - 1)
+
+activateIgnoringOtherApps :: CULong
+activateIgnoringOtherApps = 2
+
+objcClass :: String -> IO (Ptr ())
+objcClass name = withCString name $ \pointer -> do
+  value <- objcGetClass pointer
+  when (value == nullPtr) $ ioError . userError $ "Missing macOS class: " <> name
+  pure value
+
+selector :: String -> IO (Ptr ())
+selector name = withCString name selRegisterName
 
 runEventTap :: FunPtr EventTapCallback -> MVar (Either Text (Ptr ())) -> IO ()
 runEventTap callback ready = do
@@ -165,3 +221,24 @@ foreign import ccall unsafe "CFRelease"
 
 foreign import ccall unsafe "&kCFRunLoopCommonModes"
   cfRunLoopCommonModes :: Ptr (Ptr ())
+
+foreign import ccall unsafe "objc_getClass"
+  objcGetClass :: CString -> IO (Ptr ())
+
+foreign import ccall unsafe "sel_registerName"
+  selRegisterName :: CString -> IO (Ptr ())
+
+foreign import ccall unsafe "objc_msgSend"
+  msgSendPointer :: Ptr () -> Ptr () -> IO (Ptr ())
+
+foreign import ccall unsafe "objc_msgSend"
+  msgSendCIntResult :: Ptr () -> Ptr () -> IO CInt
+
+foreign import ccall unsafe "objc_msgSend"
+  msgSendCIntArgument :: Ptr () -> Ptr () -> CInt -> IO (Ptr ())
+
+foreign import ccall unsafe "objc_msgSend"
+  msgSendCULongArgument :: Ptr () -> Ptr () -> CULong -> IO CBool
+
+foreign import ccall unsafe "objc_msgSend"
+  msgSendBool :: Ptr () -> Ptr () -> IO CBool

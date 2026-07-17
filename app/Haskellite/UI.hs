@@ -80,7 +80,9 @@ import Haskellite.History (appendHistory, loadHistory)
 import Haskellite.Parakeet (Parakeet, closeParakeet, openParakeet)
 import Haskellite.Platform
   ( GlobalHotkey
+  , PasteTarget
   , SystemTray
+  , capturePasteTarget
   , hotkeyLabel
   , sendPasteShortcut
   , startGlobalHotkey
@@ -147,6 +149,7 @@ data PendingActivation = PendingActivation
   , pendingStartedAt :: Text
   , pendingSource :: ActivationSource
   , pendingModelId :: Text
+  , pendingPasteTarget :: Maybe PasteTarget
   , pendingSegments :: [TranscriptSegment]
   , pendingStopRequested :: Bool
   }
@@ -367,23 +370,27 @@ renderSettingsPage refs model = do
 
 renderCompactOverlay :: UiRefs -> UiModel -> IO ()
 renderCompactOverlay refs model = do
-  coloredText (ImVec4 0.45 0.86 1 1) "HASKELLITE"
-  sameLine
-  coloredText (statusColor model) (statusTitle model)
-  separator
-  spacing
-  textWrapped (statusMessage model)
-  progressBar (inputLevel model) (Just $ if speechActive model then "Voice detected" else "Listening…")
   let listening = isJust (activeSession model)
-  when listening do
-    stopClicked <- button "Finish now"
-    when stopClicked $ requestStop refs model
-  when (not listening) do
-    closeClicked <- button "Close"
-    when closeClicked $ hideApplication refs
-  sameLine
-  openClicked <- button "Open Haskellite"
-  when openClicked $ showMainApplication refs
+      stopping = maybe False pendingStopRequested (pendingActivation model)
+  if listening
+    then do
+      coloredText (statusColor model) $
+        if stopping
+          then "● Finishing…"
+          else if speechActive model then "● Recording" else "● Listening"
+      sameLine
+      beginDisabled stopping
+      stopClicked <- button $ if stopping then "Finishing…" else "Finish"
+      endDisabled
+      progressBar (inputLevel model) (Just "")
+      when stopClicked $ requestStop refs model
+    else do
+      coloredText (statusColor model) "Recording unavailable"
+      closeClicked <- button "Close"
+      when closeClicked $ hideApplication refs
+      sameLine
+      openClicked <- button "Open Haskellite"
+      when openClicked $ showMainApplication refs
 
 renderEnginePanel :: UiRefs -> UiModel -> IO ()
 renderEnginePanel refs model = do
@@ -421,7 +428,7 @@ renderRecorder refs model = withChildOpen "recorder" (ImVec2 0 136) True zeroBit
   clicked <- button label
   endDisabled
   when clicked $
-    if isListening then requestStop refs model else requestStart refs model WindowActivation
+    if isListening then requestStop refs model else requestStart refs model WindowActivation Nothing
 
 renderTranscript :: UiRefs -> UiModel -> IO ()
 renderTranscript refs model = do
@@ -509,8 +516,8 @@ startInstall refs = do
           (Left message, _) -> emit refs (BackgroundFailed message)
           (_, Left message) -> emit refs (BackgroundFailed message)
 
-requestStart :: UiRefs -> UiModel -> ActivationSource -> IO ()
-requestStart refs model source =
+requestStart :: UiRefs -> UiModel -> ActivationSource -> Maybe PasteTarget -> IO ()
+requestStart refs model source pasteTarget =
   case engineState model of
     EngineReady parakeet -> do
       settings <- currentSettings refs
@@ -531,6 +538,7 @@ requestStart refs model source =
                       , pendingStartedAt = isoTimestamp now
                       , pendingSource = source
                       , pendingModelId = selectedModelId settings
+                      , pendingPasteTarget = pasteTarget
                       , pendingSegments = []
                       , pendingStopRequested = False
                       }
@@ -559,8 +567,9 @@ handleGlobalHotkey refs = do
     Just _ -> requestStop refs model
     Nothing -> case engineState model of
       EngineReady _ -> do
+        pasteTarget <- capturePasteTarget
         showCompactApplication refs
-        requestStart refs model HotkeyActivation
+        requestStart refs model HotkeyActivation pasteTarget
       _ -> do
         showMainApplication refs
         modifyIORef' (modelRef refs) $ \state -> state {statusMessage = "Install or finish loading the selected Parakeet model first"}
@@ -593,7 +602,8 @@ showCompactApplication :: UiRefs -> IO ()
 showCompactApplication refs = do
   modifyIORef' (modelRef refs) $ \state -> state {compactOverlay = True}
   withWindow refs $ \window -> do
-    SDL.windowSize window SDL.$= SDL.V2 480 210
+    SDL.windowBordered window SDL.$= False
+    SDL.windowSize window SDL.$= SDL.V2 300 76
     SDL.setWindowPosition window SDL.Centered
     SDL.showWindow window
     SDL.raiseWindow window
@@ -602,6 +612,7 @@ showMainApplication :: UiRefs -> IO ()
 showMainApplication refs = do
   modifyIORef' (modelRef refs) $ \state -> state {compactOverlay = False}
   withWindow refs $ \window -> do
+    SDL.windowBordered window SDL.$= True
     SDL.windowSize window SDL.$= SDL.V2 1040 720
     SDL.setWindowPosition window SDL.Centered
     SDL.showWindow window
@@ -722,7 +733,7 @@ finalizeActivation refs = do
         pasted <-
           case clipboard of
             Left exception -> pure . Left $ "Could not copy the dictation: " <> exceptionText exception
-            Right () -> if shouldPaste then sendPasteShortcut else pure (Right ())
+            Right () -> if shouldPaste then sendPasteShortcut (pendingPasteTarget pending) else pure (Right ())
         let completedRecord = record {recordInjected = shouldPaste && either (const False) (const True) pasted}
         saved <- try @SomeException $ appendHistory (paths refs) completedRecord
         let failure = case (pasted, saved) of

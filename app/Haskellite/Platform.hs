@@ -3,7 +3,9 @@
 
 module Haskellite.Platform
   ( GlobalHotkey
+  , PasteTarget
   , SystemTray
+  , capturePasteTarget
   , hotkeyLabel
   , sendPasteShortcut
   , startGlobalHotkey
@@ -27,7 +29,11 @@ import Haskellite.Tray.Linux qualified as Tray
 #endif
 
 type GlobalHotkey = Native.GlobalHotkey
+type PasteTarget = Native.PasteTarget
 type SystemTray = Tray.SystemTray
+
+capturePasteTarget :: IO (Maybe PasteTarget)
+capturePasteTarget = Native.capturePasteTarget
 
 startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
 startGlobalHotkey = Native.startGlobalHotkey
@@ -35,7 +41,7 @@ startGlobalHotkey = Native.startGlobalHotkey
 stopGlobalHotkey :: GlobalHotkey -> IO ()
 stopGlobalHotkey = Native.stopGlobalHotkey
 
-sendPasteShortcut :: IO (Either Text ())
+sendPasteShortcut :: Maybe PasteTarget -> IO (Either Text ())
 sendPasteShortcut = Native.sendPasteShortcut
 
 startSystemTray :: SDL.Window -> IO () -> IO () -> IO (Either Text SystemTray)
