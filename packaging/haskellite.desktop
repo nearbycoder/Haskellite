@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Haskellite
+Comment=Private local voice transcription with NVIDIA Parakeet
+Exec=haskellite
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=voice;speech;transcription;dictation;

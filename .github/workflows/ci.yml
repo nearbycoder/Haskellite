@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-2025]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libbz2-dev pkg-config g++
+
+      - name: Install macOS native dependencies
+        if: runner.os == 'macOS'
+        run: brew install sdl2 bzip2 pkg-config
+
+      - name: Install Windows native dependencies
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-bzip2
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Export Windows native paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "C:\msys64\ucrt64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "PKG_CONFIG_PATH=C:\msys64\ucrt64\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.10.3
+          cabal-version: 3.16.1.0
+
+      - name: Configure
+        run: cabal update
+
+      - name: Build
+        run: cabal build all --enable-tests
+
+      - name: Test
+        run: cabal test --test-show-details=direct
+
+      - name: Headless diagnostics
+        run: cabal run haskellite -- diagnostics

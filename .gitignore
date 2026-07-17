@@ -1,0 +1,16 @@
+/dist-newstyle/
+/.cache/
+/.direnv/
+/.env
+/.idea/
+/.vscode/
+*.hi
+*.o
+*.prof
+*.hp
+*.eventlog
+*.tar.bz2
+*.onnx
+/haskellite-data/
+/release/
+/imgui.ini
