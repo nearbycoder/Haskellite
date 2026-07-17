@@ -69,6 +69,9 @@ import DearImGui.SDL.Renderer
   , sdlRendererRenderDrawData
   , sdlRendererShutdown
   )
+import Foreign (Ptr)
+import Foreign.C.String (CString, withCString)
+import Foreign.C.Types (CInt (..))
 import Haskellite.Audio (AudioCue (..), listCaptureDevices, playAudioCue)
 import Haskellite.Controller
   ( Session
@@ -113,12 +116,14 @@ import Haskellite.Types
 import Haskellite.Types qualified as Types
 import Paths_haskellite (getDataFileName)
 import System.Directory (XdgDirectory (XdgData), copyFile, createDirectoryIfMissing, doesFileExist, getXdgDirectory)
+import System.Environment (unsetEnv)
 #if defined(darwin_HOST_OS)
 import System.Environment (getExecutablePath)
 #endif
 import System.FilePath ((</>), takeDirectory)
 import Text.Printf (printf)
 import qualified SDL
+import SDL.Internal.Types (Window (..))
 
 data EngineState
   = EngineMissing
@@ -191,6 +196,7 @@ data UiRefs = UiRefs
 runDesktop :: AppPaths -> IO ()
 runDesktop appPaths = do
   ensureDesktopIntegration
+  preventActivationWhenShown
   SDL.initialize [SDL.InitVideo, SDL.InitAudio, SDL.InitEvents]
   ( do
       refs <- createUiRefs appPaths
@@ -202,13 +208,13 @@ runDesktop appPaths = do
                   { SDL.windowInitialSize = SDL.V2 1040 720
                   , SDL.windowResizable = True
                   , SDL.windowPosition = SDL.Centered
+                  , SDL.windowVisible = False
                   }
           managed $ bracket (SDL.createWindow "Haskellite" windowConfig) SDL.destroyWindow
         liftIO $ do
           writeIORef (windowRef refs) (Just window)
           registerConfiguredHotkey refs
           registerSystemTray refs window
-          when (launchMinimized $ baseSettings refs) $ SDL.hideWindow window
         renderer <- managed $ bracket (SDL.createRenderer window (-1) SDL.defaultRenderer) SDL.destroyRenderer
         _ <- managed $ bracket createContext destroyContext
         managed_ $ bracket_ (sdl2InitForSDLRenderer window renderer) sdl2Shutdown
@@ -228,6 +234,7 @@ runDesktop appPaths = do
                         <> FontAtlas.addText "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω—…’“”●"
                   )
               ]
+          unless (launchMinimized $ baseSettings refs) $ showMainApplication refs
           mainLoop refs renderer)
         `finally` cleanup refs
     )
@@ -601,17 +608,21 @@ registerSystemTray refs window = do
 showCompactApplication :: UiRefs -> IO ()
 showCompactApplication refs = do
   modifyIORef' (modelRef refs) $ \state -> state {compactOverlay = True}
+  -- Wayland may otherwise consume a launcher token on the first show and
+  -- activate the overlay despite its background-only role.
+  unsetEnv "XDG_ACTIVATION_TOKEN"
   withWindow refs $ \window -> do
     SDL.windowBordered window SDL.$= False
     SDL.windowSize window SDL.$= SDL.V2 300 76
     SDL.setWindowPosition window SDL.Centered
+    setWindowAlwaysOnTop window True
     SDL.showWindow window
-    SDL.raiseWindow window
 
 showMainApplication :: UiRefs -> IO ()
 showMainApplication refs = do
   modifyIORef' (modelRef refs) $ \state -> state {compactOverlay = False}
   withWindow refs $ \window -> do
+    setWindowAlwaysOnTop window False
     SDL.windowBordered window SDL.$= True
     SDL.windowSize window SDL.$= SDL.V2 1040 720
     SDL.setWindowPosition window SDL.Centered
@@ -623,6 +634,22 @@ hideApplication refs = withWindow refs SDL.hideWindow
 
 withWindow :: UiRefs -> (SDL.Window -> IO ()) -> IO ()
 withWindow refs action = readIORef (windowRef refs) >>= mapM_ action
+
+preventActivationWhenShown :: IO ()
+preventActivationWhenShown =
+  withCString "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN" $ \name ->
+    withCString "1" $ \value ->
+      void $ sdlSetHint name value
+
+setWindowAlwaysOnTop :: SDL.Window -> Bool -> IO ()
+setWindowAlwaysOnTop (Window rawWindow) enabled =
+  sdlSetWindowAlwaysOnTop rawWindow $ if enabled then 1 else 0
+
+foreign import ccall unsafe "SDL_SetHint"
+  sdlSetHint :: CString -> CString -> IO CInt
+
+foreign import ccall unsafe "SDL_SetWindowAlwaysOnTop"
+  sdlSetWindowAlwaysOnTop :: Ptr () -> CInt -> IO ()
 
 saveTranscript :: UiRefs -> IO ()
 saveTranscript refs = do

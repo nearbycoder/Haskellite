@@ -11,8 +11,8 @@ Python process, or network connection is needed after the one-time model setup.
 
 - Native desktop UI on Linux and macOS through SDL2 and Dear ImGui.
 - Background system-tray service and configurable global dictation shortcut.
-- Compact listening overlay, automatic stop on trailing silence, and generated
-  start/finish audio cues.
+- Non-activating compact listening overlay, automatic stop on trailing silence,
+  and generated start/finish audio cues.
 - Clipboard-backed focused-field delivery on macOS and X11. Secure
   Wayland sessions retain the transcript on the clipboard when synthetic paste
   is not permitted by the compositor.
