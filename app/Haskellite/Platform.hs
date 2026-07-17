@@ -35,7 +35,7 @@ type SystemTray = Tray.SystemTray
 capturePasteTarget :: IO (Maybe PasteTarget)
 capturePasteTarget = Native.capturePasteTarget
 
-startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
+startGlobalHotkey :: HotkeyPreset -> IO () -> IO () -> IO (Either Text GlobalHotkey)
 startGlobalHotkey = Native.startGlobalHotkey
 
 stopGlobalHotkey :: GlobalHotkey -> IO ()

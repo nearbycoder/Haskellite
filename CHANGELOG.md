@@ -12,6 +12,10 @@
 - Hotkey listening keeps the previously focused application and input active.
 - macOS requests Accessibility permission and posts a complete Command+V chord
   for reliable automatic delivery.
+- Optional hold-to-talk shortcut mode starts on key-down and finishes on
+  key-up, while the existing toggle mode remains the default.
+- Completion audio now runs alongside delivery, with the post-recognition paste
+  handoff shortened for lower perceived latency.
 - Append-only per-activation history with copyable recent dictations.
 - First-run runtime/model installer with progress and SHA-256 verification.
 - Headless diagnostics and WAV transcription commands.

@@ -28,14 +28,15 @@ data PasteTarget = PasteTarget
 capturePasteTarget :: IO (Maybe PasteTarget)
 capturePasteTarget = pure (Just PasteTarget)
 
-startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
-startGlobalHotkey preset action = do
+startGlobalHotkey :: HotkeyPreset -> IO () -> IO () -> IO (Either Text GlobalHotkey)
+startGlobalHotkey preset pressedAction releasedAction = do
   worker <- async $ poll False
   pure . Right $ GlobalHotkey worker
   where
     poll wasPressed = do
       pressed <- hotkeyPressed preset
-      when (pressed && not wasPressed) action
+      when (pressed && not wasPressed) pressedAction
+      when (not pressed && wasPressed) releasedAction
       threadDelay 16000
       poll pressed
 

@@ -10,7 +10,8 @@ Python process, or network connection is needed after the one-time model setup.
 ## What is implemented
 
 - Native desktop UI on Linux and macOS through SDL2 and Dear ImGui.
-- Background system-tray service and configurable global dictation shortcut.
+- Background system-tray service and configurable toggle or hold-to-talk
+  dictation shortcut.
 - Non-activating compact listening overlay, automatic stop on trailing silence,
   and generated start/finish audio cues.
 - Clipboard-backed focused-field delivery on macOS and X11. Secure
@@ -75,6 +76,12 @@ CI.
 4. Pause for the configured interval. Haskellite transcribes, closes the
    compact overlay, and pastes into the field that was focused.
 5. Open **History** whenever you need to recover or copy an earlier dictation.
+
+Enable **Hold shortcut to talk; release to finish** in Settings for push-to-talk
+operation. In that mode, key-down starts listening and key-up stops the session;
+brief pauses do not end dictation while the shortcut remains held.
+For the quickest post-release transcription, select **English Fast 110M** as the
+Parakeet model.
 
 The main **Start listening** button remains available for longer, multi-phrase
 transcription sessions. Press **Stop & transcribe** when that session is done.

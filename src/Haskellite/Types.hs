@@ -79,6 +79,7 @@ data Settings = Settings
   , keepAudio :: Bool
   , selectedModelId :: Text
   , activationHotkey :: HotkeyPreset
+  , holdHotkeyToTalk :: Bool
   , launchMinimized :: Bool
   , playAudioCues :: Bool
   , pasteAfterDictation :: Bool
@@ -98,6 +99,7 @@ instance FromJSON Settings where
       <*> o .:? "keepAudio" .!= False
       <*> o .:? "selectedModelId" .!= "parakeet-tdt-0.6b-v3-int8"
       <*> o .:? "activationHotkey" .!= ControlShiftSpace
+      <*> o .:? "holdHotkeyToTalk" .!= False
       <*> o .:? "launchMinimized" .!= False
       <*> o .:? "playAudioCues" .!= True
       <*> o .:? "pasteAfterDictation" .!= True
@@ -105,7 +107,7 @@ instance FromJSON Settings where
 defaultSettings :: Settings
 defaultSettings =
   Settings
-    { settingsVersion = 2
+    { settingsVersion = 3
     , audioDeviceName = Nothing
     , voiceThresholdDb = -42
     , trailingSilenceMs = 700
@@ -114,6 +116,7 @@ defaultSettings =
     , keepAudio = False
     , selectedModelId = "parakeet-tdt-0.6b-v3-int8"
     , activationHotkey = ControlShiftSpace
+    , holdHotkeyToTalk = False
     , launchMinimized = False
     , playAudioCues = True
     , pasteAfterDictation = True

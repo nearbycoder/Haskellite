@@ -167,6 +167,7 @@ data UiEvent
   | SessionStopped
   | TranscriptSaved FilePath
   | GlobalHotkeyPressed
+  | GlobalHotkeyReleased
   | DictationArchived TranscriptRecord (Maybe Text)
   | TrayShowRequested
   | TrayQuitRequested
@@ -181,6 +182,7 @@ data UiRefs = UiRefs
   , deviceRef :: IORef Int
   , modelChoiceRef :: IORef Int
   , hotkeyChoiceRef :: IORef Int
+  , holdToTalkRef :: IORef Bool
   , pasteRef :: IORef Bool
   , cuesRef :: IORef Bool
   , launchMinimizedRef :: IORef Bool
@@ -278,6 +280,7 @@ createUiRefs paths = do
     <*> newIORef selectedDevice
     <*> newIORef selectedModel
     <*> newIORef (fromMaybe 0 $ findIndex (activationHotkey settings) allHotkeys)
+    <*> newIORef (holdHotkeyToTalk settings)
     <*> newIORef (pasteAfterDictation settings)
     <*> newIORef (playAudioCues settings)
     <*> newIORef (launchMinimized settings)
@@ -485,6 +488,7 @@ renderSettings refs model = do
   endDisabled
   beginDisabled (isJust $ activeSession model)
   changedHotkey <- combo "Global shortcut" (hotkeyChoiceRef refs) (fmap hotkeyLabel allHotkeys)
+  changedHold <- checkbox "Hold shortcut to talk; release to finish" (holdToTalkRef refs)
   changedDevice <- combo "Microphone" (deviceRef refs) ("System default" : devices refs)
   changedThreshold <- sliderFloat "Voice sensitivity (dB)" (thresholdRef refs) (-60) (-20)
   changedSilence <- sliderInt "End phrase after silence (ms)" (silenceRef refs) 300 1600
@@ -494,7 +498,7 @@ renderSettings refs model = do
   endDisabled
   when changedModel $ switchModel refs
   when changedHotkey $ registerConfiguredHotkey refs
-  when (changedModel || changedHotkey || changedDevice || changedThreshold || changedSilence || changedPaste || changedCues || changedLaunch) $ saveCurrentSettings refs
+  when (changedModel || changedHotkey || changedHold || changedDevice || changedThreshold || changedSilence || changedPaste || changedCues || changedLaunch) $ saveCurrentSettings refs
   case hotkeyMessage model of
     Nothing -> coloredText (ImVec4 0.30 0.92 0.67 1) $ "Shortcut active: " <> hotkeyLabel hotkey
     Just message -> coloredText (ImVec4 1 0.60 0.32 1) message
@@ -567,11 +571,12 @@ requestStop refs model =
             stopped <- try $ stopSession session
             emit refs $ either (BackgroundFailed . exceptionText) (const SessionStopped) stopped
 
-handleGlobalHotkey :: UiRefs -> IO ()
-handleGlobalHotkey refs = do
+handleGlobalHotkeyPressed :: UiRefs -> IO ()
+handleGlobalHotkeyPressed refs = do
+  holdToTalk <- readIORef (holdToTalkRef refs)
   model <- readIORef (modelRef refs)
   case activeSession model of
-    Just _ -> requestStop refs model
+    Just _ -> unless holdToTalk $ requestStop refs model
     Nothing -> case engineState model of
       EngineReady _ -> do
         pasteTarget <- capturePasteTarget
@@ -581,12 +586,22 @@ handleGlobalHotkey refs = do
         showMainApplication refs
         modifyIORef' (modelRef refs) $ \state -> state {statusMessage = "Install or finish loading the selected Parakeet model first"}
 
+handleGlobalHotkeyReleased :: UiRefs -> IO ()
+handleGlobalHotkeyReleased refs = do
+  holdToTalk <- readIORef (holdToTalkRef refs)
+  when holdToTalk do
+    model <- readIORef (modelRef refs)
+    case (activeSession model, pendingActivation model) of
+      (Just _, Just pending)
+        | pendingSource pending == HotkeyActivation -> requestStop refs model
+      _ -> pure ()
+
 registerConfiguredHotkey :: UiRefs -> IO ()
 registerConfiguredHotkey refs = do
   previous <- readIORef (globalHotkeyRef refs)
   mapM_ stopGlobalHotkey previous
   preset <- selectedHotkey refs
-  registered <- startGlobalHotkey preset (emit refs GlobalHotkeyPressed)
+  registered <- startGlobalHotkey preset (emit refs GlobalHotkeyPressed) (emit refs GlobalHotkeyReleased)
   case registered of
     Left message -> do
       writeIORef (globalHotkeyRef refs) Nothing
@@ -682,7 +697,8 @@ handleUiEvent refs = \case
   FromSession sessionEvent -> handleSessionEvent refs sessionEvent
   SessionStopped -> finalizeActivation refs
   TranscriptSaved destination -> modifyIORef' (modelRef refs) $ \state -> state {statusMessage = "Saved to " <> Text.pack destination}
-  GlobalHotkeyPressed -> handleGlobalHotkey refs
+  GlobalHotkeyPressed -> handleGlobalHotkeyPressed refs
+  GlobalHotkeyReleased -> handleGlobalHotkeyReleased refs
   DictationArchived record failure ->
     modifyIORef' (modelRef refs) $ \state ->
       state
@@ -698,11 +714,21 @@ handleSessionEvent refs = \case
   InputLevel level -> modifyIORef' (modelRef refs) $ \state -> state {inputLevel = level}
   SpeechBegan -> modifyIORef' (modelRef refs) $ \state -> state {speechActive = True, statusMessage = "Voice detected — keep speaking"}
   SpeechEnded -> do
-    modifyIORef' (modelRef refs) $ \state -> state {speechActive = False, statusMessage = "Finishing your dictation…"}
     state <- readIORef (modelRef refs)
+    holdToTalk <- readIORef (holdToTalkRef refs)
+    let holdingShortcut =
+          holdToTalk
+            && maybe False ((== HotkeyActivation) . pendingSource) (pendingActivation state)
+    modifyIORef' (modelRef refs) $ \current ->
+      current
+        { speechActive = False
+        , statusMessage = if holdingShortcut then "Listening — release the shortcut to finish" else "Finishing your dictation…"
+        }
     case (activeSession state, pendingActivation state) of
       (Just _, Just pending)
-        | pendingSource pending == HotkeyActivation && not (pendingStopRequested pending) -> do
+        | pendingSource pending == HotkeyActivation
+            && not holdingShortcut
+            && not (pendingStopRequested pending) -> do
             modifyIORef' (modelRef refs) $ \current -> current {pendingActivation = fmap (\active -> active {pendingStopRequested = True}) (pendingActivation current)}
             requestStop refs state
       _ -> pure ()
@@ -747,7 +773,7 @@ finalizeActivation refs = do
           fromHotkey = pendingSource pending == HotkeyActivation
       pasteEnabled <- readIORef (pasteRef refs)
       cuesEnabled <- readIORef (cuesRef refs)
-      when cuesEnabled $ void (try @SomeException $ playAudioCue DictationCompleted)
+      when cuesEnabled $ spawnWorker refs $ void (try @SomeException $ playAudioCue DictationCompleted)
       clipboard <-
         if fromHotkey && pasteEnabled && not (Text.null contents)
           then try @SomeException $ SDL.setClipboardText contents
@@ -756,7 +782,9 @@ finalizeActivation refs = do
       clearSession $ if Text.null contents then "No speech detected" else "Saving dictation…"
       spawnWorker refs do
         let shouldPaste = fromHotkey && pasteEnabled && not (Text.null contents)
-        when shouldPaste $ threadDelay 180000
+        -- SDL's clipboard is synchronous on macOS; two UI frames are enough
+        -- for X11 selection ownership without holding up focused-field delivery.
+        when shouldPaste $ threadDelay 25000
         pasted <-
           case clipboard of
             Left exception -> pure . Left $ "Could not copy the dictation: " <> exceptionText exception
@@ -787,6 +815,7 @@ currentSettings refs = do
   silence <- readIORef (silenceRef refs)
   selectedDevice <- readIORef (deviceRef refs)
   hotkey <- selectedHotkey refs
+  holdToTalk <- readIORef (holdToTalkRef refs)
   pasteEnabled <- readIORef (pasteRef refs)
   cuesEnabled <- readIORef (cuesRef refs)
   startHidden <- readIORef (launchMinimizedRef refs)
@@ -795,11 +824,13 @@ currentSettings refs = do
   identifier <- selectedModelIdentifier refs
   pure
     settings
-      { audioDeviceName = device
+      { settingsVersion = settingsVersion Types.defaultSettings
+      , audioDeviceName = device
       , voiceThresholdDb = threshold
       , trailingSilenceMs = silence
       , selectedModelId = identifier
       , activationHotkey = hotkey
+      , holdHotkeyToTalk = holdToTalk
       , pasteAfterDictation = pasteEnabled
       , playAudioCues = cuesEnabled
       , launchMinimized = startHidden

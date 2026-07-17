@@ -47,6 +47,7 @@ import DBus.Client
   , matchAny
   , removeMatch
   )
+import Foreign (Ptr, alloca, peek, poke)
 import Graphics.X11.Types
   ( KeyMask
   , KeyCode
@@ -67,14 +68,18 @@ import Graphics.X11.Types
   , xK_v
   )
 import Graphics.X11.Xlib
-  ( allocaXEvent
+  ( XEventPtr
+  , allocaXEvent
   , closeDisplay
   , defaultRootWindow
+  , get_KeyEvent
   , get_EventType
   , grabKey
   , keysymToKeycode
   , nextEvent
   , openDisplay
+  , peekEvent
+  , pending
   , sync
   , ungrabKey
   )
@@ -85,35 +90,37 @@ import System.Timeout (timeout)
 
 data GlobalHotkey
   = X11Hotkey (Async ())
-  | PortalHotkey Client ObjectPath SignalHandler
+  | PortalHotkey Client ObjectPath SignalHandler SignalHandler
 
 data PasteTarget = PasteTarget
 
 capturePasteTarget :: IO (Maybe PasteTarget)
 capturePasteTarget = pure (Just PasteTarget)
 
-startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
-startGlobalHotkey preset action = do
+startGlobalHotkey :: HotkeyPreset -> IO () -> IO () -> IO (Either Text GlobalHotkey)
+startGlobalHotkey preset pressedAction releasedAction = do
   wayland <- isJust <$> lookupEnv "WAYLAND_DISPLAY"
-  outcome <- try $ if wayland then startPortalHotkey preset action else startX11Hotkey preset action
+  outcome <- try $ if wayland then startPortalHotkey preset pressedAction releasedAction else startX11Hotkey preset pressedAction releasedAction
   pure $ either (Left . exceptionText) Right outcome
 
-startX11Hotkey :: HotkeyPreset -> IO () -> IO GlobalHotkey
-startX11Hotkey preset action = do
+startX11Hotkey :: HotkeyPreset -> IO () -> IO () -> IO GlobalHotkey
+startX11Hotkey preset pressedAction releasedAction = do
     display <- openDisplay ""
     let root = defaultRootWindow display
         modifiers = hotkeyModifiers preset
     keycode <- keysymToKeycode display (hotkeyKeySym preset)
+    detectableRepeat <- enableDetectableAutoRepeat display
     mapM_ (\extra -> grabKey display keycode (modifiers .|. extra) root False grabModeAsync grabModeAsync) ignoredLockMasks
     sync display False
-    worker <- async $ eventLoop display action `finally` release display keycode modifiers
+    worker <- async $ eventLoop display keycode detectableRepeat pressedAction releasedAction `finally` release display keycode modifiers
     pure $ X11Hotkey worker
 
 stopGlobalHotkey :: GlobalHotkey -> IO ()
 stopGlobalHotkey hotkey = case hotkey of
   X11Hotkey worker -> cancel worker >> void (waitCatch worker)
-  PortalHotkey client session handler -> do
-    void . try @SomeException $ removeMatch client handler
+  PortalHotkey client session activatedHandler deactivatedHandler -> do
+    void . try @SomeException $ removeMatch client activatedHandler
+    void . try @SomeException $ removeMatch client deactivatedHandler
     void . try @SomeException $
       call_
         client
@@ -138,21 +145,30 @@ sendPasteShortcut _ = do
         sync display False
       pure $ either (Left . exceptionText) Right outcome
 
-eventLoop :: Display -> IO () -> IO ()
-eventLoop display action = allocaXEvent $ \event -> go False event
+eventLoop :: Display -> KeyCode -> Bool -> IO () -> IO () -> IO ()
+eventLoop display hotkeyCode detectableRepeat pressedAction releasedAction = allocaXEvent $ \event -> go False event
   where
     go pressed event = do
       nextEvent display event
       eventType <- get_EventType event
       case eventType of
         value | value == keyPress -> do
-          when (not pressed) action
-          go True event
-        value | value == keyRelease -> go False event
+          (_, _, _, _, _, _, _, _, keycode, _) <- get_KeyEvent event
+          when (keycode == hotkeyCode && not pressed) pressedAction
+          go (pressed || keycode == hotkeyCode) event
+        value | value == keyRelease -> do
+          (_, _, _, _, _, _, _, _, keycode, _) <- get_KeyEvent event
+          if keycode == hotkeyCode && pressed
+            then do
+              repeated <- if detectableRepeat then pure False else isAutoRepeatRelease display event
+              if repeated
+                then go True event
+                else releasedAction >> go False event
+            else go pressed event
         _ -> go pressed event
 
-startPortalHotkey :: HotkeyPreset -> IO () -> IO GlobalHotkey
-startPortalHotkey preset action = do
+startPortalHotkey :: HotkeyPreset -> IO () -> IO () -> IO GlobalHotkey
+startPortalHotkey preset pressedAction releasedAction = do
   client <- connectSession
   (`onException` disconnect client) do
     _ <-
@@ -193,15 +209,23 @@ startPortalHotkey preset action = do
         , toVariant ("" :: Text)
         , toVariant $ Map.fromList [("handle_token" :: Text, toVariant ("haskellite_bind" :: Text))]
         ]
-    handler <-
+    activatedHandler <-
       addMatch
         client
         matchAny
           { matchInterface = Just portalInterface
           , matchMember = Just "Activated"
           }
-        (handlePortalActivation action)
-    pure $ PortalHotkey client session handler
+        (handlePortalShortcut pressedAction)
+    deactivatedHandler <-
+      addMatch
+        client
+        matchAny
+          { matchInterface = Just portalInterface
+          , matchMember = Just "Deactivated"
+          }
+        (handlePortalShortcut releasedAction)
+    pure $ PortalHotkey client session activatedHandler deactivatedHandler
 
 portalRequest :: Client -> Text -> [Variant] -> IO (Map Text Variant)
 portalRequest client member body = do
@@ -247,8 +271,8 @@ parseSessionHandle value =
       Just textValue -> pure . fromString $ Text.unpack (textValue :: Text)
       Nothing -> ioError $ userError "The Global Shortcuts portal returned an invalid session handle"
 
-handlePortalActivation :: IO () -> Signal -> IO ()
-handlePortalActivation action signal =
+handlePortalShortcut :: IO () -> Signal -> IO ()
+handlePortalShortcut action signal =
   case signalBody signal of
     (_ : shortcutValue : _)
       | Just shortcutId <- fromVariant shortcutValue
@@ -298,8 +322,31 @@ hotkeyKeySym preset = case preset of
   FunctionKey8 -> xK_F8
   FunctionKey9 -> xK_F9
 
+enableDetectableAutoRepeat :: Display -> IO Bool
+enableDetectableAutoRepeat display =
+  alloca $ \supportedPointer -> do
+    poke supportedPointer 0
+    enabled <- xkbSetDetectableAutoRepeat display 1 supportedPointer
+    supported <- peek supportedPointer
+    pure $ enabled /= 0 && supported /= 0
+
+isAutoRepeatRelease :: Display -> XEventPtr -> IO Bool
+isAutoRepeatRelease display releasedEvent = do
+  (_, _, releasedAt, _, _, _, _, _, releasedKey, _) <- get_KeyEvent releasedEvent
+  queued <- pending display
+  if queued <= 0
+    then pure False
+    else allocaXEvent $ \next -> do
+      peekEvent display next
+      nextType <- get_EventType next
+      (_, _, pressedAt, _, _, _, _, _, pressedKey, _) <- get_KeyEvent next
+      pure $ nextType == keyPress && pressedKey == releasedKey && pressedAt == releasedAt
+
 exceptionText :: SomeException -> Text
 exceptionText = Text.pack . displayException
 
 foreign import ccall unsafe "XTestFakeKeyEvent"
   xTestFakeKeyEvent :: Display -> CUInt -> CInt -> CULong -> IO CInt
+
+foreign import ccall unsafe "XkbSetDetectableAutoRepeat"
+  xkbSetDetectableAutoRepeat :: Display -> CInt -> Ptr CInt -> IO CInt

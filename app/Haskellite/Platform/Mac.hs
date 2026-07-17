@@ -16,6 +16,7 @@ import Control.Concurrent.Async (Async, asyncBound, cancel, waitCatch)
 import Control.Exception (SomeException, bracket, displayException, finally, try)
 import Control.Monad (unless, void, when)
 import Data.Bits ((.&.), (.|.), shiftL)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word16, Word32, Word64)
@@ -34,15 +35,25 @@ newtype PasteTarget = PasteTarget CInt
 
 type EventTapCallback = Ptr () -> Word32 -> Ptr () -> Ptr () -> IO (Ptr ())
 
-startGlobalHotkey :: HotkeyPreset -> IO () -> IO (Either Text GlobalHotkey)
-startGlobalHotkey preset action = do
+startGlobalHotkey :: HotkeyPreset -> IO () -> IO () -> IO (Either Text GlobalHotkey)
+startGlobalHotkey preset pressedAction releasedAction = do
   ready <- newEmptyMVar
+  pressedRef <- newIORef False
   callback <- makeEventTapCallback $ \_ eventType event _ -> do
     when (eventType == keyDownEvent) do
       keyCode <- fromIntegral <$> cgEventGetIntegerValueField event keyboardKeycodeField
       autoRepeat <- cgEventGetIntegerValueField event keyboardAutorepeatField
       flags <- cgEventGetFlags event
-      when (autoRepeat == 0 && matchesHotkey preset keyCode flags) action
+      alreadyPressed <- readIORef pressedRef
+      when (autoRepeat == 0 && not alreadyPressed && matchesHotkey preset keyCode flags) do
+        writeIORef pressedRef True
+        pressedAction
+    when (eventType == keyUpEvent) do
+      keyCode <- fromIntegral <$> cgEventGetIntegerValueField event keyboardKeycodeField
+      alreadyPressed <- readIORef pressedRef
+      when (alreadyPressed && keyCode == hotkeyKeyCode preset) do
+        writeIORef pressedRef False
+        releasedAction
     pure event
   worker <- asyncBound $ runEventTap callback ready
   takeMVar ready >>= \case
@@ -152,7 +163,10 @@ selector name = withCString name selRegisterName
 
 runEventTap :: FunPtr EventTapCallback -> MVar (Either Text (Ptr ())) -> IO ()
 runEventTap callback ready = do
-  tap <- cgEventTapCreate sessionEventTap headInsertEventTap listenOnlyEventTap (1 `shiftL` fromIntegral keyDownEvent) callback nullPtr
+  let eventMask =
+        (1 `shiftL` fromIntegral keyDownEvent)
+          .|. (1 `shiftL` fromIntegral keyUpEvent)
+  tap <- cgEventTapCreate sessionEventTap headInsertEventTap listenOnlyEventTap eventMask callback nullPtr
   if tap == nullPtr
     then putMVar ready (Left "macOS did not grant Input Monitoring permission for the global shortcut")
     else do
@@ -171,22 +185,32 @@ matchesHotkey :: HotkeyPreset -> Word16 -> Word64 -> Bool
 matchesHotkey preset keyCode flags =
   keyCode == expectedKey && flags .&. modifierMask == expectedModifiers
   where
-    (expectedKey, expectedModifiers) = case preset of
-      ControlShiftSpace -> (virtualSpace, controlMask .|. shiftMask)
-      ControlAltSpace -> (virtualSpace, controlMask .|. optionMask)
-      SuperShiftSpace -> (virtualSpace, commandMask .|. shiftMask)
-      FunctionKey8 -> (virtualF8, 0)
-      FunctionKey9 -> (virtualF9, 0)
+    expectedKey = hotkeyKeyCode preset
+    expectedModifiers = case preset of
+      ControlShiftSpace -> controlMask .|. shiftMask
+      ControlAltSpace -> controlMask .|. optionMask
+      SuperShiftSpace -> commandMask .|. shiftMask
+      FunctionKey8 -> 0
+      FunctionKey9 -> 0
+
+hotkeyKeyCode :: HotkeyPreset -> Word16
+hotkeyKeyCode preset = case preset of
+  ControlShiftSpace -> virtualSpace
+  ControlAltSpace -> virtualSpace
+  SuperShiftSpace -> virtualSpace
+  FunctionKey8 -> virtualF8
+  FunctionKey9 -> virtualF9
 
 exceptionText :: SomeException -> Text
 exceptionText = Text.pack . displayException
 
-sessionEventTap, headInsertEventTap, listenOnlyEventTap, hidEventTap, keyDownEvent :: Word32
+sessionEventTap, headInsertEventTap, listenOnlyEventTap, hidEventTap, keyDownEvent, keyUpEvent :: Word32
 sessionEventTap = 1
 headInsertEventTap = 0
 listenOnlyEventTap = 1
 hidEventTap = 0
 keyDownEvent = 10
+keyUpEvent = 11
 
 keyboardAutorepeatField, keyboardKeycodeField :: Word32
 keyboardAutorepeatField = 8
