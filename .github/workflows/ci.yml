@@ -45,10 +45,12 @@ jobs:
           $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "clang64\lib\pkgconfig"
           $sdlPkgConfig = Join-Path $pkgConfigPath "sdl2.pc"
           $sdlMetadata = Get-Content -Path $sdlPkgConfig -Raw
-          $sdlMetadata = $sdlMetadata -replace '-lmingw32\s+-lSDL2main\s+-lSDL2\s+-mwindows', '-lSDL2'
+          $sdlMetadata = $sdlMetadata -replace '(?m)^Libs:.*$', 'Libs: -L${libdir} -lSDL2'
           Set-Content -Path $sdlPkgConfig -Value $sdlMetadata -NoNewline
           & (Join-Path $clangBin "pkg-config.exe") --version
-          & (Join-Path $clangBin "pkg-config.exe") --libs sdl2
+          $sdlLibs = & (Join-Path $clangBin "pkg-config.exe") --libs sdl2
+          $sdlLibs
+          if ($sdlLibs -match 'SDL2main') { throw "SDL2main must not be linked by Haskellite" }
           $clangBin | Out-File -FilePath $env:GITHUB_PATH -Append
           "PKG_CONFIG_PATH=$pkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
