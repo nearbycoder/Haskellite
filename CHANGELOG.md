@@ -10,6 +10,8 @@
 - Global shortcut dictation, compact listening overlay, audio cues,
   focused-field delivery, and background system-tray operation.
 - Hotkey listening keeps the previously focused application and input active.
+- macOS requests Accessibility permission and posts a complete Command+V chord
+  for reliable automatic delivery.
 - Append-only per-activation history with copyable recent dictations.
 - First-run runtime/model installer with progress and SHA-256 verification.
 - Headless diagnostics and WAV transcription commands.

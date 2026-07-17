@@ -83,6 +83,11 @@ you to approve the shortcut the first time. Wayland does not expose general
 synthetic keyboard input, so if direct paste is denied the completed text stays
 on the clipboard and history remains intact.
 
+On macOS, approve both **Input Monitoring** (for the global shortcut) and
+**Accessibility** (for automatic Command+V delivery) when prompted. If either
+permission was just enabled, trigger a new dictation after returning from System
+Settings; the previous text remains on the clipboard and in History.
+
 The sensitivity slider is in dBFS. Move it toward `-60` for quieter voices and
 toward `-20` if background noise triggers recording.
 

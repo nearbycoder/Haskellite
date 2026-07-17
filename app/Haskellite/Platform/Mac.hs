@@ -82,15 +82,41 @@ sendPasteShortcut :: Maybe PasteTarget -> IO (Either Text ())
 sendPasteShortcut Nothing = pure $ Left "macOS could not remember the application that owned the focused field"
 sendPasteShortcut (Just target) = do
   outcome <- try $ do
+    ensurePostEventAccess
     restorePasteTarget target
-    bracket (cgEventCreateKeyboardEvent nullPtr virtualV 1) cfRelease $ \down ->
-      bracket (cgEventCreateKeyboardEvent nullPtr virtualV 0) cfRelease $ \up -> do
-        when (down == nullPtr || up == nullPtr) $ ioError (userError "macOS could not create a keyboard event")
-        cgEventSetFlags down commandMask
-        cgEventSetFlags up commandMask
-        cgEventPost hidEventTap down
-        cgEventPost hidEventTap up
+    postPasteChord
   pure $ either (Left . exceptionText) Right outcome
+
+ensurePostEventAccess :: IO ()
+ensurePostEventAccess = do
+  trusted <- cgPreflightPostEventAccess
+  unless (trusted /= 0) do
+    granted <- cgRequestPostEventAccess
+    unless (granted /= 0) $
+      ioError . userError $
+        "Allow Haskellite in System Settings > Privacy & Security > Accessibility, then try dictation again"
+
+postPasteChord :: IO ()
+postPasteChord = withCFObject "keyboard event source" (cgEventSourceCreate combinedSessionState) $ \source -> do
+  postKey source virtualCommand True commandMask
+  threadDelay 8000
+  postKey source virtualV True commandMask
+  threadDelay 8000
+  postKey source virtualV False commandMask
+  threadDelay 8000
+  postKey source virtualCommand False 0
+
+postKey :: Ptr () -> Word16 -> Bool -> Word64 -> IO ()
+postKey source keyCode pressed flags =
+  withCFObject "keyboard event" (cgEventCreateKeyboardEvent source keyCode $ if pressed then 1 else 0) $ \event -> do
+    cgEventSetFlags event flags
+    cgEventPost hidEventTap event
+
+withCFObject :: String -> IO (Ptr ()) -> (Ptr () -> IO a) -> IO a
+withCFObject description create action = do
+  pointer <- create
+  when (pointer == nullPtr) . ioError . userError $ "macOS could not create a " <> description
+  bracket (pure pointer) cfRelease action
 
 restorePasteTarget :: PasteTarget -> IO ()
 restorePasteTarget (PasteTarget processId) = do
@@ -98,11 +124,13 @@ restorePasteTarget (PasteTarget processId) = do
   applicationSelector <- selector "runningApplicationWithProcessIdentifier:"
   target <- msgSendCIntArgument runningClass applicationSelector processId
   when (target == nullPtr) $ ioError (userError "The application that owned the focused field is no longer running")
-  activateSelector <- selector "activateWithOptions:"
-  activated <- msgSendCULongArgument target activateSelector activateIgnoringOtherApps
-  unless (activated /= 0) $ ioError (userError "macOS did not restore the application that owned the focused field")
-  waitUntilActive target 12
-  threadDelay 50000
+  active <- msgSendBool target =<< selector "isActive"
+  unless (active /= 0) do
+    activateSelector <- selector "activateWithOptions:"
+    activated <- msgSendCULongArgument target activateSelector activateIgnoringOtherApps
+    unless (activated /= 0) $ ioError (userError "macOS did not restore the application that owned the focused field")
+    waitUntilActive target 12
+    threadDelay 50000
 
 waitUntilActive :: Ptr () -> Int -> IO ()
 waitUntilActive _ 0 = ioError (userError "Timed out while restoring the application that owned the focused field")
@@ -177,6 +205,12 @@ virtualSpace = 49
 virtualF8 = 100
 virtualF9 = 101
 
+virtualCommand :: Word16
+virtualCommand = 55
+
+combinedSessionState :: CInt
+combinedSessionState = 0
+
 foreign import ccall "wrapper"
   makeEventTapCallback :: EventTapCallback -> IO (FunPtr EventTapCallback)
 
@@ -195,11 +229,20 @@ foreign import ccall unsafe "CGEventGetFlags"
 foreign import ccall unsafe "CGEventCreateKeyboardEvent"
   cgEventCreateKeyboardEvent :: Ptr () -> Word16 -> CBool -> IO (Ptr ())
 
+foreign import ccall unsafe "CGEventSourceCreate"
+  cgEventSourceCreate :: CInt -> IO (Ptr ())
+
 foreign import ccall unsafe "CGEventSetFlags"
   cgEventSetFlags :: Ptr () -> Word64 -> IO ()
 
 foreign import ccall unsafe "CGEventPost"
   cgEventPost :: Word32 -> Ptr () -> IO ()
+
+foreign import ccall unsafe "CGPreflightPostEventAccess"
+  cgPreflightPostEventAccess :: IO CBool
+
+foreign import ccall unsafe "CGRequestPostEventAccess"
+  cgRequestPostEventAccess :: IO CBool
 
 foreign import ccall unsafe "CFMachPortCreateRunLoopSource"
   cfMachPortCreateRunLoopSource :: Ptr () -> Ptr () -> CLong -> IO (Ptr ())
