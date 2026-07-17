@@ -49,12 +49,11 @@ sherpa-onnx runtime downloaded during first-run setup. Input Monitoring and
 Accessibility approval may also be requested for the global shortcut and
 focused-field paste.
 
-## Windows
+## Windows (deferred)
 
-Place `haskellite.exe`, `SDL2.dll`, and the MinGW C++ runtime DLLs in the same
-directory. Embed `windows.manifest` for per-monitor DPI awareness. The downloaded
-sherpa-onnx and ONNX Runtime DLLs live under the user's application data folder
-and are loaded by absolute path.
+Windows packaging and support are paused, and Windows is not exercised in CI.
+The backend and `windows.manifest` remain in the source tree so the target can be
+re-enabled later without reconstructing the platform integration.
 
 Always include the project license, Noto font license, and model attribution in
 distributed packages.

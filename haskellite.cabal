@@ -1,7 +1,7 @@
 cabal-version:      3.0
 name:               haskellite
 version:            0.1.0.0
-synopsis:           Local, cross-platform Parakeet voice transcription
+synopsis:           Local Parakeet voice transcription for Linux and macOS
 description:
   Haskellite is a Haskell desktop application for private, local voice-to-text
   transcription using NVIDIA Parakeet TDT through the sherpa-onnx C ABI.

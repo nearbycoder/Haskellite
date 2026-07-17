@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-2025]
+        os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -22,43 +22,6 @@ jobs:
       - name: Install macOS native dependencies
         if: runner.os == 'macOS'
         run: brew install sdl2 bzip2 pkg-config
-
-      - name: Install Windows native dependencies
-        if: runner.os == 'Windows'
-        id: msys2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANG64
-          update: true
-          install: >-
-            mingw-w64-clang-x86_64-SDL2
-            mingw-w64-clang-x86_64-bzip2
-            mingw-w64-clang-x86_64-llvm-tools
-            mingw-w64-clang-x86_64-pkgconf
-
-      - name: Export Windows native paths
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
-        run: |
-          $clangBin = Join-Path $env:MSYS2_LOCATION "clang64\bin"
-          $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "clang64\lib\pkgconfig"
-          # GHC's LLD rejects the MSVC-only /exclude directives embedded in SDL2main.
-          $sdlMain = Join-Path $env:MSYS2_LOCATION "clang64\lib\libSDL2main.a"
-          $sdlMainClean = "$sdlMain.clean"
-          & (Join-Path $clangBin "llvm-objcopy.exe") --remove-section=.drectve $sdlMain $sdlMainClean
-          if ($LASTEXITCODE -ne 0) { throw "Could not sanitize the SDL2main archive" }
-          Move-Item -Force $sdlMainClean $sdlMain
-          $sdlMainSections = & (Join-Path $clangBin "llvm-objdump.exe") -h $sdlMain | Out-String
-          if ($LASTEXITCODE -ne 0) { throw "Could not inspect the sanitized SDL2main archive" }
-          if ($sdlMainSections -match '\.drectve') { throw "SDL2main still contains incompatible linker directives" }
-          & (Join-Path $clangBin "pkg-config.exe") --version
-          $sdlLibs = & (Join-Path $clangBin "pkg-config.exe") --libs sdl2
-          $sdlLibs
-          if ($sdlLibs -notmatch 'SDL2main') { throw "SDL2main is required for SDL's Windows startup shim" }
-          $clangBin | Out-File -FilePath $env:GITHUB_PATH -Append
-          "PKG_CONFIG_PATH=$pkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - uses: haskell-actions/setup@v2
         with:

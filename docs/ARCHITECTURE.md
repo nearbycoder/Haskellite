@@ -53,8 +53,9 @@ streams downloads to `.part` files, verifies SHA-256, and extracts tar+bzip2 in
 Haskell. The installer recursively discovers archive contents instead of
 depending on the release archive's outer directory name.
 
-Supported runtime targets are Linux x86_64/aarch64, macOS universal2, and
-Windows x86_64/arm64. CPU inference is the portable default.
+Supported runtime targets are Linux x86_64/aarch64 and macOS universal2. CPU
+inference is the portable default. Windows runtime definitions are retained for
+future work, but Windows is excluded from the active support and CI matrix.
 
 ### Desktop UI and CLI
 
@@ -69,14 +70,16 @@ does not require a display server.
 
 ### Platform integration and dictation history
 
-The executable implements its OS services directly from Haskell:
+The executable implements its supported OS services directly from Haskell:
 
-- Windows polls the global key state, uses the notification-area API, and emits
-  the native paste chord.
 - macOS uses a Core Graphics event tap, an AppKit status item through the
   Objective-C runtime, and a Command+V event.
 - Linux uses the XDG Global Shortcuts portal on Wayland, X11 passive key grabs
   elsewhere, and a StatusNotifierItem over D-Bus.
+
+A Windows implementation that polls global key state, uses the notification
+area API, and emits the native paste chord remains in the tree as deferred code.
+It is not currently packaged, supported, or exercised in CI.
 
 A shortcut activation shows the same SDL window in a compact mode. Trailing
 silence stops that activation, the controller drains recognition work, and the

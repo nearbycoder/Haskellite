@@ -1,7 +1,7 @@
 # Haskellite
 
-Haskellite is a private, cross-platform desktop voice-to-text app written in
-Haskell. Press a global shortcut from any application, speak, and Haskellite
+Haskellite is a private desktop voice-to-text app written in Haskell for Linux
+and macOS. Press a global shortcut from any application, speak, and Haskellite
 transcribes locally with NVIDIA Parakeet before returning the text to the field
 you were using.
 No account, cloud API,
@@ -9,11 +9,11 @@ Python process, or network connection is needed after the one-time model setup.
 
 ## What is implemented
 
-- Native desktop UI on Linux, macOS, and Windows through SDL2 and Dear ImGui.
+- Native desktop UI on Linux and macOS through SDL2 and Dear ImGui.
 - Background system-tray service and configurable global dictation shortcut.
 - Compact listening overlay, automatic stop on trailing silence, and generated
   start/finish audio cues.
-- Clipboard-backed focused-field delivery on Windows, macOS, and X11. Secure
+- Clipboard-backed focused-field delivery on macOS and X11. Secure
   Wayland sessions retain the transcript on the clipboard when synthetic paste
   is not permitted by the compositor.
 - Float PCM microphone capture with device selection and a live level meter.
@@ -61,14 +61,11 @@ sudo pacman -S sdl2 bzip2 libx11 libxtst pkgconf gcc
 
 # macOS
 brew install sdl2 bzip2 pkg-config
-
-# Windows, from an MSYS2 CLANG64 shell
-pacman -S mingw-w64-clang-x86_64-SDL2 mingw-w64-clang-x86_64-bzip2 \
-  mingw-w64-clang-x86_64-pkgconf
 ```
 
-On Windows, make sure `C:\msys64\clang64\bin` is on `PATH` and its
-`lib\pkgconfig` directory is on `PKG_CONFIG_PATH` before running Cabal.
+Windows support is paused. The existing Windows backend remains in the source
+tree for future work, but it is not currently supported, packaged, or tested in
+CI.
 
 ## Using Haskellite
 
@@ -153,5 +150,5 @@ cabal test --test-show-details=direct
 cabal run haskellite -- diagnostics
 ```
 
-The CI matrix builds and tests Linux, macOS, and Windows. Release packaging notes
-and OS metadata live in [`packaging/`](packaging/README.md).
+The CI matrix builds and tests Linux and macOS. Release packaging notes and OS
+metadata live in [`packaging/`](packaging/README.md).
