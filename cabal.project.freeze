@@ -206,5 +206,6 @@ constraints: any.OneTuple ==0.4.3,
              any.vector-stream ==0.1.0.1,
              any.witherable ==0.5,
              any.zlib ==0.7.1.1,
-             zlib -bundled-c-zlib +non-blocking-ffi +pkg-config
+             zlib +bundled-c-zlib +non-blocking-ffi -pkg-config,
+             any.zlib-clib ==1.3.2
 index-state: hackage.haskell.org 2026-07-17T01:23:20Z

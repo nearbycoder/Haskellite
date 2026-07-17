@@ -5,5 +5,8 @@ index-state: 2026-07-17T01:23:20Z
 package dear-imgui
   flags: +sdl +sdl-renderer -opengl3 -glfw -vulkan
 
+package zlib
+  flags: +bundled-c-zlib -pkg-config
+
 package haskellite
   ghc-options: -O1
