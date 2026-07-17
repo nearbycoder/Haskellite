@@ -111,6 +111,9 @@ import Haskellite.Types
 import Haskellite.Types qualified as Types
 import Paths_haskellite (getDataFileName)
 import System.Directory (XdgDirectory (XdgData), copyFile, createDirectoryIfMissing, doesFileExist, getXdgDirectory)
+#if defined(darwin_HOST_OS)
+import System.Environment (getExecutablePath)
+#endif
 import System.FilePath ((</>), takeDirectory)
 import Text.Printf (printf)
 import qualified SDL
@@ -209,7 +212,7 @@ runDesktop appPaths = do
         managed_ $ bracket_ (sdlRendererInit renderer) sdlRendererShutdown
         liftIO $ do
           styleColorsDark
-          fontPath <- getDataFileName "assets/NotoSans-Regular.ttf"
+          fontPath <- getAppDataFileName "assets/NotoSans-Regular.ttf"
           _ <-
             FontAtlas.rebuild
               [ FontAtlas.FromTTF
@@ -933,10 +936,21 @@ ensureDesktopIntegration :: IO ()
 ensureDesktopIntegration = pure ()
 #else
 ensureDesktopIntegration = do
-  source <- getDataFileName "packaging/haskellite.desktop"
+  source <- getAppDataFileName "packaging/haskellite.desktop"
   destination <- getXdgDirectory XdgData ("applications" </> "haskellite.desktop")
   exists <- doesFileExist destination
   unless exists $ do
     createDirectoryIfMissing True (takeDirectory destination)
     copyFile source destination
+#endif
+
+getAppDataFileName :: FilePath -> IO FilePath
+#if defined(darwin_HOST_OS)
+getAppDataFileName relativePath = do
+  executable <- getExecutablePath
+  let bundledPath = takeDirectory (takeDirectory executable) </> "Resources" </> relativePath
+  bundled <- doesFileExist bundledPath
+  if bundled then pure bundledPath else getDataFileName relativePath
+#else
+getAppDataFileName = getDataFileName
 #endif

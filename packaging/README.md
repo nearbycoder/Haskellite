@@ -17,12 +17,35 @@ the host portal can identify it.
 
 ## macOS
 
-Place the executable in `Haskellite.app/Contents/MacOS`, copy the Noto font into
-the Cabal data directory, and bundle SDL2 as a framework or dylib. Merge the
-provided `Info.plist` so macOS displays the microphone permission explanation.
-Code-sign after all dylib paths have been fixed with `install_name_tool`.
-Input Monitoring and Accessibility approval may be requested for the global
-shortcut and focused-field paste.
+Build a movable, ad-hoc-signed application bundle on a Mac with:
+
+```bash
+brew install sdl2 bzip2 pkg-config
+./packaging/build-macos.sh
+cp -R release/Haskellite.app /Applications/
+```
+
+The script places the executable in `Contents/MacOS`, copies application data
+into `Contents/Resources`, recursively bundles non-system dylibs in
+`Contents/Frameworks`, fixes their load paths, and signs the finished bundle.
+Pass a different output path as its first argument if needed. The executable
+targets the architecture of the Mac performing the build.
+
+To create a release for other Macs, provide a Developer ID Application signing
+identity and then submit the resulting bundle to Apple's notary service:
+
+```bash
+MACOS_SIGN_IDENTITY='Developer ID Application: Example (TEAMID)' \
+  ./packaging/build-macos.sh
+ditto -c -k --keepParent release/Haskellite.app release/Haskellite.zip
+xcrun notarytool submit release/Haskellite.zip --keychain-profile notarytool --wait
+xcrun stapler staple release/Haskellite.app
+```
+
+The signing entitlements allow microphone input and loading the checksum-pinned
+sherpa-onnx runtime downloaded during first-run setup. Input Monitoring and
+Accessibility approval may also be requested for the global shortcut and
+focused-field paste.
 
 ## Windows
 

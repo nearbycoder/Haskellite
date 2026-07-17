@@ -23,7 +23,9 @@ extra-source-files:
   docs/ARCHITECTURE.md
   packaging/Info.plist
   packaging/README.md
+  packaging/build-macos.sh
   packaging/haskellite.desktop
+  packaging/macos.entitlements
   packaging/windows.manifest
   vendor/sherpa-onnx/include/sherpa-onnx/c-api/c-api.h
 
