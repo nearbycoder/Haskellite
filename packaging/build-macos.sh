@@ -66,6 +66,8 @@ declare -a MACHO_BUNDLE_QUEUE=("$EXECUTABLE")
 declare -a PROCESSED=()
 declare -a COPIED_SOURCES=()
 declare -a COPIED_DESTINATIONS=()
+SDL3_ENQUEUED=false
+ENQUEUED_DESTINATION=""
 
 already_processed() {
   local candidate="$1"
@@ -128,22 +130,12 @@ resolve_dependency() {
   return 1
 }
 
-copy_dependency() {
-  local owner="$1"
-  local source_owner="$2"
-  local dependency="$3"
-  local source name destination bundled_path index known_source
+enqueue_library() {
+  local source="$1"
+  local name="${2:-$(basename -- "$source")}"
+  local destination index known_source
 
-  is_system_library "$dependency" && return 0
-
-  source="$(resolve_dependency "$dependency" "$source_owner")" \
-    || fail "cannot resolve $dependency required by $source_owner"
-  is_system_library "$source" && return 0
-
-  name="$(basename -- "$source")"
   destination="$FRAMEWORKS/$name"
-  bundled_path="@executable_path/../Frameworks/$name"
-
   known_source=""
   for ((index = 0; index < ${#COPIED_DESTINATIONS[@]}; index++)); do
     if [[ "${COPIED_DESTINATIONS[$index]}" == "$destination" ]]; then
@@ -155,13 +147,54 @@ copy_dependency() {
   if [[ -n "$known_source" ]]; then
     [[ "$source" -ef "$known_source" ]] || fail "two different dependencies have the name $name"
   else
-    cp "$source" "$destination"
+    cp -L "$source" "$destination"
     chmod u+w "$destination"
     install_name_tool -id "@rpath/$name" "$destination"
     COPIED_SOURCES+=("$source")
     COPIED_DESTINATIONS+=("$destination")
     MACHO_SOURCE_QUEUE+=("$source")
     MACHO_BUNDLE_QUEUE+=("$destination")
+  fi
+
+  ENQUEUED_DESTINATION="$destination"
+}
+
+enqueue_sdl3_runtime() {
+  local sdl3_libdir sdl3_source
+
+  [[ "$SDL3_ENQUEUED" == true ]] && return 0
+  pkg-config --exists sdl3 \
+    || fail "the installed SDL2 compatibility library requires SDL3; run: brew install sdl3"
+  sdl3_libdir="$(pkg-config --variable=libdir sdl3)"
+  sdl3_source="$sdl3_libdir/libSDL3.dylib"
+  [[ -f "$sdl3_source" ]] \
+    || fail "SDL3 was found, but $sdl3_source is missing"
+
+  echo "Detected sdl2-compat; bundling SDL3"
+  enqueue_library "$sdl3_source" "libSDL3.dylib"
+  SDL3_ENQUEUED=true
+}
+
+copy_dependency() {
+  local owner="$1"
+  local source_owner="$2"
+  local dependency="$3"
+  local source name destination bundled_path
+
+  is_system_library "$dependency" && return 0
+
+  source="$(resolve_dependency "$dependency" "$source_owner")" \
+    || fail "cannot resolve $dependency required by $source_owner"
+  is_system_library "$source" && return 0
+
+  name="$(basename -- "$source")"
+  enqueue_library "$source"
+  destination="$ENQUEUED_DESTINATION"
+  bundled_path="@executable_path/../Frameworks/$name"
+
+  if [[ "$name" == libSDL2*.dylib ]] \
+    && grep -a -q "Failed loading SDL3 library" "$source"; then
+    enqueue_sdl3_runtime
   fi
 
   install_name_tool -change "$dependency" "$bundled_path" "$owner"

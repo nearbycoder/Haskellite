@@ -20,7 +20,7 @@ the host portal can identify it.
 Build a movable, ad-hoc-signed application bundle on a Mac with:
 
 ```bash
-brew install sdl2 bzip2 pkg-config
+brew install sdl2 sdl3 bzip2 pkg-config
 ./packaging/build-macos.sh
 cp -R release/Haskellite.app /Applications/
 ```
@@ -29,7 +29,9 @@ The script places the executable in `Contents/MacOS`, copies application data
 into `Contents/Resources`, recursively bundles non-system dylibs in
 `Contents/Frameworks`, fixes their load paths, and signs the finished bundle.
 Pass a different output path as its first argument if needed. The executable
-targets the architecture of the Mac performing the build.
+targets the architecture of the Mac performing the build. If Homebrew provides
+SDL2 through its SDL3-backed compatibility layer, the runtime-loaded SDL3 dylib
+is detected and bundled as well.
 
 To create a release for other Macs, provide a Developer ID Application signing
 identity and then submit the resulting bundle to Apple's notary service:
