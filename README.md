@@ -1,5 +1,17 @@
 # Haskellite
 
+<p align="center">
+  <img src="docs/screenshots/haskellite-main.png" width="900" alt="Haskellite full dictation workspace">
+  <br>
+  <sub>Full dictation workspace</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/haskellite-overlay.png" width="360" alt="Haskellite compact background listening overlay">
+  <br>
+  <sub>Compact, non-activating background listening overlay</sub>
+</p>
+
 Haskellite is a private desktop voice-to-text app written in Haskell for Linux
 and macOS. Press a global shortcut from any application, speak, and Haskellite
 transcribes locally with NVIDIA Parakeet before returning the text to the field

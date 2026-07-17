@@ -239,7 +239,7 @@ runDesktop appPaths = do
                   ( FontAtlas.RangesBuilder $
                       FontAtlas.addRanges FontAtlas.Latin
                         <> FontAtlas.addRanges FontAtlas.Cyrillic
-                        <> FontAtlas.addText "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω—…’“”●"
+                        <> FontAtlas.addText "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω—…’“”"
                   )
               ]
           unless (launchMinimized $ baseSettings refs) $ showMainApplication refs
@@ -377,11 +377,11 @@ renderApplication refs = withFullscreen do
 renderNavigation :: UiRefs -> IO ()
 renderNavigation refs = do
   current <- readIORef (pageRef refs)
-  dictationClicked <- button $ if current == 0 then "● Dictate" else "Dictate"
+  dictationClicked <- button $ if current == 0 then "[Dictate]" else "Dictate"
   sameLine
-  historyClicked <- button $ if current == 1 then "● History" else "History"
+  historyClicked <- button $ if current == 1 then "[History]" else "History"
   sameLine
-  settingsClicked <- button $ if current == 2 then "● Settings" else "Settings"
+  settingsClicked <- button $ if current == 2 then "[Settings]" else "Settings"
   when dictationClicked $ writeIORef (pageRef refs) 0
   when historyClicked $ writeIORef (pageRef refs) 1
   when settingsClicked $ writeIORef (pageRef refs) 2
@@ -400,8 +400,8 @@ renderCompactOverlay refs model = do
     then do
       coloredText (statusColor model) $
         if stopping
-          then "● Finishing…"
-          else if speechActive model then "● Recording" else "● Listening"
+          then "Finishing…"
+          else if speechActive model then "Recording" else "Listening"
       sameLine
       beginDisabled stopping
       stopClicked <- button $ if stopping then "Finishing…" else "Finish"
