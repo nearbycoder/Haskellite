@@ -33,6 +33,7 @@ jobs:
           install: >-
             mingw-w64-clang-x86_64-SDL2
             mingw-w64-clang-x86_64-bzip2
+            mingw-w64-clang-x86_64-llvm-tools
             mingw-w64-clang-x86_64-pkgconf
 
       - name: Export Windows native paths
@@ -43,14 +44,19 @@ jobs:
         run: |
           $clangBin = Join-Path $env:MSYS2_LOCATION "clang64\bin"
           $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "clang64\lib\pkgconfig"
-          $sdlPkgConfig = Join-Path $pkgConfigPath "sdl2.pc"
-          $sdlMetadata = Get-Content -Path $sdlPkgConfig -Raw
-          $sdlMetadata = $sdlMetadata -replace '(?m)^Libs:.*$', 'Libs: -L${libdir} -lSDL2'
-          Set-Content -Path $sdlPkgConfig -Value $sdlMetadata -NoNewline
+          # GHC's LLD rejects the MSVC-only /exclude directives embedded in SDL2main.
+          $sdlMain = Join-Path $env:MSYS2_LOCATION "clang64\lib\libSDL2main.a"
+          $sdlMainClean = "$sdlMain.clean"
+          & (Join-Path $clangBin "llvm-objcopy.exe") --remove-section=.drectve $sdlMain $sdlMainClean
+          if ($LASTEXITCODE -ne 0) { throw "Could not sanitize the SDL2main archive" }
+          Move-Item -Force $sdlMainClean $sdlMain
+          $sdlMainSections = & (Join-Path $clangBin "llvm-objdump.exe") -h $sdlMain | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect the sanitized SDL2main archive" }
+          if ($sdlMainSections -match '\.drectve') { throw "SDL2main still contains incompatible linker directives" }
           & (Join-Path $clangBin "pkg-config.exe") --version
           $sdlLibs = & (Join-Path $clangBin "pkg-config.exe") --libs sdl2
           $sdlLibs
-          if ($sdlLibs -match 'SDL2main') { throw "SDL2main must not be linked by Haskellite" }
+          if ($sdlLibs -notmatch 'SDL2main') { throw "SDL2main is required for SDL's Windows startup shim" }
           $clangBin | Out-File -FilePath $env:GITHUB_PATH -Append
           "PKG_CONFIG_PATH=$pkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
