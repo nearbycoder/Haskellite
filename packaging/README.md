@@ -9,8 +9,11 @@ used on every platform.
 
 Build with `cabal build -O2`, copy the executable reported by
 `cabal list-bin haskellite`, install `haskellite.desktop`, and declare SDL2 as a
-package dependency. AppImage/Flatpak builds should bundle SDL2. The app stores
-data below `XDG_DATA_HOME/haskellite`.
+package dependency. X11 builds also require X11 and Xtst; Wayland shortcut
+registration uses the session D-Bus and XDG Desktop Portal. AppImage/Flatpak
+builds should bundle SDL2. The app stores data below
+`XDG_DATA_HOME/haskellite` and installs a per-user desktop entry when needed so
+the host portal can identify it.
 
 ## macOS
 
@@ -18,6 +21,8 @@ Place the executable in `Haskellite.app/Contents/MacOS`, copy the Noto font into
 the Cabal data directory, and bundle SDL2 as a framework or dylib. Merge the
 provided `Info.plist` so macOS displays the microphone permission explanation.
 Code-sign after all dylib paths have been fixed with `install_name_tool`.
+Input Monitoring and Accessibility approval may be requested for the global
+shortcut and focused-field paste.
 
 ## Windows
 

@@ -16,6 +16,7 @@ extra-doc-files:     README.md, CHANGELOG.md
 data-files:
   assets/NotoSans-Regular.ttf
   assets/NotoSans-LICENSE.txt
+  packaging/haskellite.desktop
 extra-source-files:
   cabal.project
   cabal.project.freeze
@@ -45,6 +46,7 @@ library
   exposed-modules:
     Haskellite.Audio
     Haskellite.Controller
+    Haskellite.History
     Haskellite.Parakeet
     Haskellite.Runtime
     Haskellite.Types
@@ -81,6 +83,7 @@ executable haskellite
   hs-source-dirs: app
   main-is: Main.hs
   other-modules:
+    Haskellite.Platform
     Haskellite.UI
     Paths_haskellite
   autogen-modules:
@@ -101,6 +104,25 @@ executable haskellite
     text >=2.1 && <2.2,
     time >=1.12 && <1.16,
     vector >=0.13 && <0.14
+  if os(windows)
+    other-modules:
+      Haskellite.Platform.Windows
+      Haskellite.Tray.Windows
+    extra-libraries: shell32, user32
+  elif os(osx)
+    other-modules:
+      Haskellite.Platform.Mac
+      Haskellite.Tray.Mac
+    frameworks: ApplicationServices, Cocoa, CoreFoundation
+  else
+    other-modules:
+      Haskellite.Platform.Linux
+      Haskellite.Tray.Linux
+    build-depends:
+      X11 >=1.10 && <1.11,
+      dbus >=1.3 && <1.5,
+      unix >=2.8 && <2.9
+    extra-libraries: Xtst
 
 source-repository head
   type: git
@@ -112,6 +134,7 @@ test-suite haskellite-test
   hs-source-dirs: test
   main-is: Main.hs
   other-modules:
+    Haskellite.HistorySpec
     Haskellite.RuntimeSpec
     Haskellite.VADSpec
     Haskellite.WavSpec

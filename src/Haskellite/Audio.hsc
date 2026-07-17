@@ -6,9 +6,11 @@
 
 module Haskellite.Audio
   ( AudioCapture
+  , AudioCue (..)
   , captureHealth
   , captureSampleRate
   , listCaptureDevices
+  , playAudioCue
   , readAudioChunk
   , startAudioCapture
   , stopAudioCapture
@@ -81,6 +83,12 @@ foreign import ccall unsafe "SDL_CloseAudioDevice"
 foreign import ccall unsafe "SDL_GetError"
   cGetError :: IO CString
 
+foreign import ccall unsafe "SDL_QueueAudio"
+  cQueueAudio :: AudioDeviceId -> Ptr () -> Word32 -> IO CInt
+
+data AudioCue = DictationStarted | DictationCompleted
+  deriving (Eq, Show)
+
 data AudioCapture = AudioCapture
   { captureDevice :: AudioDeviceId
   , captureQueue :: TBQueue (Vector Float)
@@ -91,6 +99,45 @@ data AudioCapture = AudioCapture
 
 listCaptureDevices :: IO [Text]
 listCaptureDevices = Foldable.toList . maybe mempty id <$> SDL.getAudioDeviceNames SDL.ForCapture
+
+playAudioCue :: AudioCue -> IO ()
+playAudioCue cue =
+  allocaBytesAligned audioSpecSize audioSpecAlignment $ \desired ->
+    allocaBytesAligned audioSpecSize audioSpecAlignment $ \obtained -> do
+      fillBytes desired 0 audioSpecSize
+      fillBytes obtained 0 audioSpecSize
+      pokeByteOff desired frequencyOffset (fromIntegral cueSampleRate :: CInt)
+      pokeByteOff desired formatOffset floatingNativeFormat
+      pokeByteOff desired channelsOffset (1 :: Word8)
+      pokeByteOff desired samplesOffset (512 :: Word16)
+      device <- cOpenAudioDevice nullPtr 0 desired obtained 0
+      when (device == 0) $ sdlError "Could not open the audio cue device"
+      let samples = cueSamples cue
+          byteCount = Vector.length samples * sizeOfFloat
+      queued <- Vector.unsafeWith samples $ \buffer -> cQueueAudio device (castPtr buffer) (fromIntegral byteCount)
+      when (queued /= 0) $ cCloseAudioDevice device >> sdlError "Could not queue the audio cue"
+      cPauseAudioDevice device 0
+      threadDelay (cueDurationMs * 1000 + 30000)
+      cCloseAudioDevice device
+
+cueSamples :: AudioCue -> Vector Float
+cueSamples cue = Vector.generate sampleCount sampleAt
+  where
+    sampleCount = cueSampleRate * cueDurationMs `div` 1000
+    half = sampleCount `div` 2
+    (firstFrequency, secondFrequency) = case cue of
+      DictationStarted -> (660, 880)
+      DictationCompleted -> (880, 660)
+    sampleAt index =
+      let frequency = if index < half then firstFrequency else secondFrequency
+          phase = 2 * pi * frequency * fromIntegral index / fromIntegral cueSampleRate
+          edge = min index (sampleCount - index - 1)
+          envelope = min 1 (fromIntegral edge / 160)
+       in realToFrac (0.12 * envelope * sin phase :: Double)
+
+cueSampleRate, cueDurationMs :: Int
+cueSampleRate = 44100
+cueDurationMs = 120
 
 startAudioCapture :: Maybe Text -> IO AudioCapture
 startAudioCapture requestedDevice = do

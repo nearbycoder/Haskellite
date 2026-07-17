@@ -6,14 +6,20 @@
 
 module Haskellite.Runtime
   ( DownloadAsset (..)
+  , ParakeetModel (..)
   , RuntimeLibraries (..)
+  , availableModels
   , currentRuntimeAsset
   , discoverAppPaths
   , installParakeet
+  , installParakeetFor
   , loadSettings
   , modelAsset
+  , modelById
+  , modelDirectoryFor
   , modelVersion
   , resolveModelPaths
+  , resolveModelPathsFor
   , resolveRuntimeLibraries
   , runtimeVersion
   , saveSettings
@@ -37,7 +43,7 @@ import Haskellite.Types
   , InstallProgress (..)
   , InstallStage (..)
   , ModelPaths (..)
-  , Settings
+  , Settings (settingsVersion)
   , defaultSettings
   )
 import Network.HTTP.Client
@@ -90,6 +96,55 @@ data RuntimeLibraries = RuntimeLibraries
   , runtimeDependencies :: [FilePath]
   }
   deriving (Eq, Show)
+
+data ParakeetModel = ParakeetModel
+  { parakeetModelId :: Text
+  , parakeetModelName :: Text
+  , parakeetModelSummary :: Text
+  , parakeetModelLanguages :: Text
+  , parakeetModelAsset :: DownloadAsset
+  }
+  deriving (Eq, Show)
+
+availableModels :: [ParakeetModel]
+availableModels =
+  [ ParakeetModel
+      { parakeetModelId = modelVersion
+      , parakeetModelName = "Multilingual 600M"
+      , parakeetModelSummary = "Best all-around accuracy; automatic language detection"
+      , parakeetModelLanguages = "25 European languages"
+      , parakeetModelAsset = modelAsset
+      }
+  , ParakeetModel
+      { parakeetModelId = "parakeet-tdt-0.6b-v2-int8"
+      , parakeetModelName = "English Quality 600M"
+      , parakeetModelSummary = "High-accuracy English dictation"
+      , parakeetModelLanguages = "English"
+      , parakeetModelAsset =
+          DownloadAsset
+            { assetName = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
+            , assetUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
+            , assetBytes = 482468385
+            , assetSha256 = "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"
+            }
+      }
+  , ParakeetModel
+      { parakeetModelId = "parakeet-tdt-transducer-110m-en-int8"
+      , parakeetModelName = "English Fast 110M"
+      , parakeetModelSummary = "Smallest download and quickest CPU response"
+      , parakeetModelLanguages = "English"
+      , parakeetModelAsset =
+          DownloadAsset
+            { assetName = "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8.tar.bz2"
+            , assetUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8.tar.bz2"
+            , assetBytes = 108035095
+            , assetSha256 = "f628312e9fdf8686374cb01a69425c41732529d540860311f16f37cbc32cfe9b"
+            }
+      }
+  ]
+
+modelById :: Text -> Maybe ParakeetModel
+modelById identifier = find ((== identifier) . parakeetModelId) availableModels
 
 modelAsset :: DownloadAsset
 modelAsset =
@@ -145,7 +200,7 @@ loadSettings paths = do
     then pure defaultSettings
     else do
       decoded <- Aeson.eitherDecodeFileStrict' (settingsFile paths)
-      pure $ either (const defaultSettings) id decoded
+      pure $ either (const defaultSettings) (\settings -> settings {settingsVersion = settingsVersion defaultSettings}) decoded
 
 saveSettings :: AppPaths -> Settings -> IO ()
 saveSettings paths settings = do
@@ -154,11 +209,20 @@ saveSettings paths settings = do
   replaceFile (settingsFile paths <> ".tmp") (settingsFile paths)
 
 resolveModelPaths :: AppPaths -> IO (Either Text ModelPaths)
-resolveModelPaths paths = do
-  encoder <- findNamedFile (modelDirectory paths) ["encoder.int8.onnx"]
-  decoder <- findNamedFile (modelDirectory paths) ["decoder.int8.onnx"]
-  joiner <- findNamedFile (modelDirectory paths) ["joiner.int8.onnx"]
-  tokens <- findNamedFile (modelDirectory paths) ["tokens.txt"]
+resolveModelPaths paths = resolveModelPathsFor paths modelVersion
+
+modelDirectoryFor :: AppPaths -> Text -> FilePath
+modelDirectoryFor paths identifier
+  | identifier == modelVersion = modelDirectory paths
+  | otherwise = takeDirectory (modelDirectory paths) </> Text.unpack identifier
+
+resolveModelPathsFor :: AppPaths -> Text -> IO (Either Text ModelPaths)
+resolveModelPathsFor paths identifier = do
+  let directory = modelDirectoryFor paths identifier
+  encoder <- findNamedFile directory ["encoder.int8.onnx"]
+  decoder <- findNamedFile directory ["decoder.int8.onnx"]
+  joiner <- findNamedFile directory ["joiner.int8.onnx"]
+  tokens <- findNamedFile directory ["tokens.txt"]
   pure $ ModelPaths <$> required "encoder.int8.onnx" encoder <*> required "decoder.int8.onnx" decoder <*> required "joiner.int8.onnx" joiner <*> required "tokens.txt" tokens
   where
     required name = maybe (Left $ "Missing Parakeet file: " <> Text.pack name) Right
@@ -182,18 +246,26 @@ resolveRuntimeLibraries paths = do
     required description = maybe (Left $ "Missing " <> description) Right
 
 installParakeet :: AppPaths -> (InstallProgress -> IO ()) -> IO ()
-installParakeet paths notify = do
+installParakeet paths = installParakeetFor paths modelVersion
+
+installParakeetFor :: AppPaths -> Text -> (InstallProgress -> IO ()) -> IO ()
+installParakeetFor paths identifier notify = do
+  selectedModel <-
+    maybe
+      (throwIO . userError $ "Unknown Parakeet model: " <> Text.unpack identifier)
+      pure
+      (modelById identifier)
   notify $ progress CheckingFiles 0 Nothing "Checking local runtime and model files"
   runtimeReady <- either (const False) (const True) <$> resolveRuntimeLibraries paths
-  modelReady <- either (const False) (const True) <$> resolveModelPaths paths
+  modelReady <- either (const False) (const True) <$> resolveModelPathsFor paths identifier
   manager <- newManager tlsManagerSettings
   unless runtimeReady $ do
     runtimeAsset <- either (throwIO . userError . Text.unpack) pure currentRuntimeAsset
     installArchive manager paths runtimeAsset (runtimeDirectory paths) DownloadingRuntime VerifyingRuntime ExtractingRuntime notify
   unless modelReady $
-    installArchive manager paths modelAsset (modelDirectory paths) DownloadingModel VerifyingModel ExtractingModel notify
+    installArchive manager paths (parakeetModelAsset selectedModel) (modelDirectoryFor paths identifier) DownloadingModel VerifyingModel ExtractingModel notify
   finalRuntime <- resolveRuntimeLibraries paths
-  finalModel <- resolveModelPaths paths
+  finalModel <- resolveModelPathsFor paths identifier
   _ <- either (throwIO . userError . Text.unpack) pure finalRuntime
   _ <- either (throwIO . userError . Text.unpack) pure finalModel
   notify $ progress InstallationComplete 1 (Just 1) "Parakeet is ready"

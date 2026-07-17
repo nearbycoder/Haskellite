@@ -5,12 +5,16 @@ module Haskellite.RuntimeSpec (runtimeTests) where
 
 import Data.ByteString qualified as ByteString
 import Data.Either (isRight)
+import Data.List (nub)
 import Data.Text qualified as Text
 import Haskellite.Runtime
   ( DownloadAsset (..)
+  , ParakeetModel (..)
+  , availableModels
   , currentRuntimeAsset
   , modelAsset
   , resolveModelPaths
+  , modelById
   , resolveRuntimeLibraries
   , sha256File
   )
@@ -30,6 +34,12 @@ runtimeTests =
         either (const $ pure ()) (\asset -> Text.length (assetSha256 asset) @?= 64) currentRuntimeAsset
     , testCase "the Parakeet archive is checksum pinned" $
         Text.length (assetSha256 modelAsset) @?= 64
+    , testCase "every selectable model has a unique id and checksum" $ do
+        let identifiers = fmap parakeetModelId availableModels
+        length identifiers @?= 3
+        length (nub identifiers) @?= length identifiers
+        mapM_ (\model -> Text.length (assetSha256 $ parakeetModelAsset model) @?= 64) availableModels
+        mapM_ (\model -> modelById (parakeetModelId model) @?= Just model) availableModels
     , testCase "SHA-256 is streamed correctly" $
         withSystemTempDirectory "haskellite-sha" $ \directory -> do
           let path = directory </> "abc"

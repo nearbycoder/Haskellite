@@ -3,8 +3,12 @@
 ## 0.1.0.0 — 2026-07-16
 
 - Initial cross-platform Haskell desktop application.
-- Local NVIDIA Parakeet TDT 0.6B v3 INT8 transcription.
+- Selectable multilingual 600M, English Quality 600M, and English Fast 110M
+  NVIDIA Parakeet models with pinned downloads.
 - SDL2 microphone capture, Haskell voice segmentation, transcript editing,
   clipboard copy, and text export.
+- Global shortcut dictation, compact listening overlay, audio cues,
+  focused-field delivery, and background system-tray operation.
+- Append-only per-activation history with copyable recent dictations.
 - First-run runtime/model installer with progress and SHA-256 verification.
 - Headless diagnostics and WAV transcription commands.

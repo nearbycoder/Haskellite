@@ -5,11 +5,14 @@
 
 module Haskellite.Types
   ( AppPaths (..)
+  , ActivationSource (..)
+  , HotkeyPreset (..)
   , InstallProgress (..)
   , InstallStage (..)
   , ModelPaths (..)
   , RecognitionResult (..)
   , Settings (..)
+  , TranscriptRecord (..)
   , TranscriptSegment (..)
   , defaultSettings
   , emptyRecognitionResult
@@ -74,6 +77,11 @@ data Settings = Settings
   , maximumUtteranceSeconds :: Int
   , inferenceThreads :: Int
   , keepAudio :: Bool
+  , selectedModelId :: Text
+  , activationHotkey :: HotkeyPreset
+  , launchMinimized :: Bool
+  , playAudioCues :: Bool
+  , pasteAfterDictation :: Bool
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJSON)
@@ -88,18 +96,43 @@ instance FromJSON Settings where
       <*> o .:? "maximumUtteranceSeconds" .!= 30
       <*> o .:? "inferenceThreads" .!= 2
       <*> o .:? "keepAudio" .!= False
+      <*> o .:? "selectedModelId" .!= "parakeet-tdt-0.6b-v3-int8"
+      <*> o .:? "activationHotkey" .!= ControlShiftSpace
+      <*> o .:? "launchMinimized" .!= False
+      <*> o .:? "playAudioCues" .!= True
+      <*> o .:? "pasteAfterDictation" .!= True
 
 defaultSettings :: Settings
 defaultSettings =
   Settings
-    { settingsVersion = 1
+    { settingsVersion = 2
     , audioDeviceName = Nothing
     , voiceThresholdDb = -42
     , trailingSilenceMs = 700
     , maximumUtteranceSeconds = 30
     , inferenceThreads = 2
     , keepAudio = False
+    , selectedModelId = "parakeet-tdt-0.6b-v3-int8"
+    , activationHotkey = ControlShiftSpace
+    , launchMinimized = False
+    , playAudioCues = True
+    , pasteAfterDictation = True
     }
+
+data HotkeyPreset
+  = ControlShiftSpace
+  | ControlAltSpace
+  | SuperShiftSpace
+  | FunctionKey8
+  | FunctionKey9
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data ActivationSource
+  = HotkeyActivation
+  | WindowActivation
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
 
 data RecognitionResult = RecognitionResult
   { recognizedText :: Text
@@ -137,6 +170,20 @@ data TranscriptSegment = TranscriptSegment
   , segmentText :: Text
   , segmentLanguage :: Maybe Text
   , segmentAudioSeconds :: Float
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data TranscriptRecord = TranscriptRecord
+  { recordId :: Text
+  , recordStartedAt :: Text
+  , recordCompletedAt :: Text
+  , recordSource :: ActivationSource
+  , recordModelId :: Text
+  , recordText :: Text
+  , recordLanguage :: Maybe Text
+  , recordAudioSeconds :: Float
+  , recordInjected :: Bool
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

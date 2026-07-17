@@ -17,7 +17,7 @@ jobs:
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libbz2-dev pkg-config g++
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libbz2-dev libx11-dev libxtst-dev pkg-config g++
 
       - name: Install macOS native dependencies
         if: runner.os == 'macOS'
@@ -43,7 +43,12 @@ jobs:
         run: |
           $clangBin = Join-Path $env:MSYS2_LOCATION "clang64\bin"
           $pkgConfigPath = Join-Path $env:MSYS2_LOCATION "clang64\lib\pkgconfig"
+          $sdlPkgConfig = Join-Path $pkgConfigPath "sdl2.pc"
+          $sdlMetadata = Get-Content -Path $sdlPkgConfig -Raw
+          $sdlMetadata = $sdlMetadata -replace '-lmingw32\s+-lSDL2main\s+-lSDL2\s+-mwindows', '-lSDL2'
+          Set-Content -Path $sdlPkgConfig -Value $sdlMetadata -NoNewline
           & (Join-Path $clangBin "pkg-config.exe") --version
+          & (Join-Path $clangBin "pkg-config.exe") --libs sdl2
           $clangBin | Out-File -FilePath $env:GITHUB_PATH -Append
           "PKG_CONFIG_PATH=$pkgConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 

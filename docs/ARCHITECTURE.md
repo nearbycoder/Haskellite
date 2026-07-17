@@ -67,11 +67,34 @@ The same core library powers headless install, diagnostics, microphone check,
 and WAV transcription commands. This gives CI and support workflows a path that
 does not require a display server.
 
+### Platform integration and dictation history
+
+The executable implements its OS services directly from Haskell:
+
+- Windows polls the global key state, uses the notification-area API, and emits
+  the native paste chord.
+- macOS uses a Core Graphics event tap, an AppKit status item through the
+  Objective-C runtime, and a Command+V event.
+- Linux uses the XDG Global Shortcuts portal on Wayland, X11 passive key grabs
+  elsewhere, and a StatusNotifierItem over D-Bus.
+
+A shortcut activation shows the same SDL window in a compact mode. Trailing
+silence stops that activation, the controller drains recognition work, and the
+UI restores the previously focused application before requesting paste. Linux
+Wayland deliberately reports clipboard-only delivery because compositors block
+unprivileged synthetic keyboard input.
+
+Each activation accumulates all of its transcript segments into one record.
+Records append as UTF-8 JSON Lines under the application data directory, keeping
+each activation independently inspectable. Model files remain separated by
+model ID so switching models does not overwrite another installation.
+
 ## Resource ownership
 
 ```text
 Application
 ├── SDL window + renderer + font atlas
+├── Global shortcut + system tray
 ├── Engine
 │   ├── ONNX Runtime dynamic library
 │   ├── sherpa-onnx dynamic library
@@ -93,5 +116,6 @@ close tears down ImGui before SDL.
 - Audio queue saturation drops the newest block instead of growing memory.
 - Recognition errors are surfaced beside the transcript; the next phrase can
   still be processed.
+- Delivery errors retain the text on the clipboard and in durable history.
 - A missing or mismatched native runtime becomes an actionable setup error in
   both the UI and `diagnostics` command.

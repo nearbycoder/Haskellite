@@ -22,10 +22,9 @@ import Haskellite.Runtime
   ( DownloadAsset (assetName)
   , currentRuntimeAsset
   , discoverAppPaths
-  , installParakeet
+  , installParakeetFor
   , loadSettings
-  , modelVersion
-  , resolveModelPaths
+  , resolveModelPathsFor
   , resolveRuntimeLibraries
   , runtimeVersion
   )
@@ -33,7 +32,7 @@ import Haskellite.Types
   ( AppPaths
   , InstallProgress (..)
   , RecognitionResult (recognizedText)
-  , Settings (inferenceThreads)
+  , Settings (inferenceThreads, selectedModelId)
   )
 import Haskellite.UI (runDesktop)
 import Haskellite.Wav (WavAudio (..), readWavFile)
@@ -72,7 +71,9 @@ main = do
   appPaths <- discoverAppPaths
   run <- try $ case commandToRun of
     Desktop -> runDesktop appPaths
-    Install -> installParakeet appPaths printProgress
+    Install -> do
+      settings <- loadSettings appPaths
+      installParakeetFor appPaths (selectedModelId settings) printProgress
     Diagnose -> diagnostics appPaths
     CheckMicrophone -> checkMicrophone
     Transcribe path -> transcribeFile appPaths path
@@ -108,21 +109,22 @@ printProgress progress =
 
 diagnostics :: AppPaths -> IO ()
 diagnostics appPaths = do
+  settings <- loadSettings appPaths
   runtime <- resolveRuntimeLibraries appPaths
-  model <- resolveModelPaths appPaths
+  model <- resolveModelPathsFor appPaths (selectedModelId settings)
   putStrLn $ "Haskellite runtime: " <> Text.unpack runtimeVersion
-  putStrLn $ "Parakeet model:     " <> Text.unpack modelVersion
+  putStrLn $ "Parakeet model:     " <> Text.unpack (selectedModelId settings)
   putStrLn $ "Platform asset:     " <> either Text.unpack assetName currentRuntimeAsset
   putStrLn $ "Runtime files:      " <> either Text.unpack (const "ready") runtime
   putStrLn $ "Model files:        " <> either Text.unpack (const "ready") model
 
 transcribeFile :: AppPaths -> FilePath -> IO ()
 transcribeFile appPaths path = do
+  settings <- loadSettings appPaths
   runtime <- resolveRuntimeLibraries appPaths >>= either (die . Text.unpack) pure
-  model <- resolveModelPaths appPaths >>= either (die . Text.unpack) pure
+  model <- resolveModelPathsFor appPaths (selectedModelId settings) >>= either (die . Text.unpack) pure
   WavAudio sampleRate samples <- readWavFile path >>= either (die . Text.unpack) pure
   when (Vector.null samples) $ die "The WAV file has no audio samples"
-  settings <- loadSettings appPaths
   withParakeet runtime model (inferenceThreads settings) $ \parakeet -> do
     result <- transcribeSamples parakeet sampleRate samples
     TextIO.putStrLn (recognizedText result)

@@ -1,21 +1,29 @@
 # Haskellite
 
 Haskellite is a private, cross-platform desktop voice-to-text app written in
-Haskell. It records from a microphone, separates speech into natural phrases,
-and transcribes locally with
-[NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
+Haskell. Press a global shortcut from any application, speak, and Haskellite
+transcribes locally with NVIDIA Parakeet before returning the text to the field
+you were using.
 No account, cloud API,
 Python process, or network connection is needed after the one-time model setup.
 
 ## What is implemented
 
 - Native desktop UI on Linux, macOS, and Windows through SDL2 and Dear ImGui.
+- Background system-tray service and configurable global dictation shortcut.
+- Compact listening overlay, automatic stop on trailing silence, and generated
+  start/finish audio cues.
+- Clipboard-backed focused-field delivery on Windows, macOS, and X11. Secure
+  Wayland sessions retain the transcript on the clipboard when synthetic paste
+  is not permitted by the compositor.
 - Float PCM microphone capture with device selection and a live level meter.
 - Haskell voice-activity segmentation with pre-roll, configurable sensitivity,
   trailing-silence detection, and a maximum phrase length.
-- Local NVIDIA Parakeet TDT 0.6B v3 INT8 inference in 25 European languages.
+- Three checksum-pinned Parakeet choices: multilingual 600M, English Quality
+  600M, and English Fast 110M.
 - Automatic punctuation, capitalization, and language detection from Parakeet.
 - Editable transcript, clipboard copy, and timestamped UTF-8 text export.
+- Durable per-activation dictation history with one-click copy.
 - First-run model/runtime installer with streaming progress and pinned SHA-256
   checksums.
 - Headless install, diagnostics, microphone check, and WAV transcription tools.
@@ -46,10 +54,10 @@ Common dependency commands:
 
 ```bash
 # Ubuntu / Debian
-sudo apt install libsdl2-dev libbz2-dev pkg-config g++
+sudo apt install libsdl2-dev libbz2-dev libx11-dev libxtst-dev pkg-config g++
 
 # Arch / CachyOS
-sudo pacman -S sdl2 bzip2 pkgconf gcc
+sudo pacman -S sdl2 bzip2 libx11 libxtst pkgconf gcc
 
 # macOS
 brew install sdl2 bzip2 pkg-config
@@ -64,12 +72,19 @@ On Windows, make sure `C:\msys64\clang64\bin` is on `PATH` and its
 
 ## Using Haskellite
 
-1. Start Haskellite and wait for the status to say **Ready**.
-2. Select a microphone or leave **System default** selected.
-3. Press **Start listening** and speak naturally.
-4. Pause for the configured interval (700 ms by default). Haskellite submits
-   the phrase to Parakeet and keeps listening for the next one.
-5. Edit, copy, or save the resulting transcript.
+1. Start Haskellite and install the selected model if prompted.
+2. Leave Haskellite in the system tray and focus any text field.
+3. Press **Ctrl+Shift+Space** (configurable), then speak naturally.
+4. Pause for the configured interval. Haskellite transcribes, closes the
+   compact overlay, and pastes into the field that was focused.
+5. Open **History** whenever you need to recover or copy an earlier dictation.
+
+The main **Start listening** button remains available for longer, multi-phrase
+transcription sessions. Press **Stop & transcribe** when that session is done.
+On Wayland, Haskellite uses the XDG Global Shortcuts portal. The desktop may ask
+you to approve the shortcut the first time. Wayland does not expose general
+synthetic keyboard input, so if direct paste is denied the completed text stays
+on the clipboard and history remains intact.
 
 The sensitivity slider is in dBFS. Move it toward `-60` for quieter voices and
 toward `-20` if background noise triggers recording.
@@ -96,6 +111,9 @@ audio is downmixed in Haskell, and sherpa-onnx resamples to the model rate.
 ## Architecture
 
 ```text
+Global shortcut / Start button
+      │
+      ▼
 SDL2 microphone
       │ float PCM
       ▼
@@ -108,18 +126,18 @@ Haskell capture queue ──► Haskell VAD / phrase segmentation
                          ONNX Runtime + Parakeet
                                   │ UTF-8 JSON
                                   ▼
-                       Haskell transcript state ──► UI / clipboard / text file
+                       Haskell transcript state ──► focused field / history / UI
 ```
 
-The UI, audio producer, segmenter, and recognizer are separate threads joined by
-bounded STM queues. Slow inference cannot block the SDL event loop, while the
-bounded queues prevent unbounded memory growth. See
+The UI, platform listener, audio producer, segmenter, and recognizer are
+separate threads joined by bounded STM queues. Slow inference cannot block the
+SDL event loop, while the bounded queues prevent unbounded memory growth. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for ownership and failure details.
 
 ## Models, licensing, and privacy
 
-- The model is NVIDIA `parakeet-tdt-0.6b-v3`, converted to ONNX and quantized by
-  the sherpa-onnx project. NVIDIA publishes the model under CC BY 4.0.
+- The models are NVIDIA Parakeet variants converted to ONNX and quantized by
+  the sherpa-onnx project. NVIDIA publishes them under CC BY 4.0.
 - sherpa-onnx and ONNX Runtime are native runtime dependencies downloaded from
   the pinned [sherpa-onnx 1.13.2
   release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.2).
